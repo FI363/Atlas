@@ -1,0 +1,115 @@
+const WebSocket = require('ws');
+const { spawn } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+
+const PORT = 8080;
+const PROJECT_ROOT = path.join(__dirname, '..'); // atlas/ directory
+const wss = new WebSocket.Server({ port: PORT });
+
+console.log(`Atlas Remote Engine starting on ws://localhost:${PORT}`);
+console.log(`Project root: ${PROJECT_ROOT}`);
+
+// Recursively build a file tree (max 2 levels deep to avoid huge payloads)
+function buildTree(dirPath, depth = 0, maxDepth = 3) {
+  const entries = [];
+  try {
+    const items = fs.readdirSync(dirPath, { withFileTypes: true });
+    for (const item of items) {
+      // Skip hidden dirs, build, node_modules
+      if (item.name.startsWith('.') || item.name === 'build' || item.name === 'node_modules') continue;
+      
+      if (item.isDirectory()) {
+        entries.push({
+          name: item.name,
+          type: 'dir',
+          children: depth < maxDepth ? buildTree(path.join(dirPath, item.name), depth + 1, maxDepth) : [],
+        });
+      } else {
+        entries.push({ name: item.name, type: 'file' });
+      }
+    }
+  } catch (e) {
+    console.error(`Error reading dir ${dirPath}:`, e.message);
+  }
+  // Sort: directories first, then files, alphabetical within each group
+  entries.sort((a, b) => {
+    if (a.type !== b.type) return a.type === 'dir' ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  return entries;
+}
+
+wss.on('connection', (ws) => {
+  console.log('Client connected from iPad!');
+
+  ws.send(JSON.stringify({
+    type: 'system',
+    message: `Connected to Atlas Remote Engine (${os.type()} ${os.release()})`
+  }));
+
+  ws.on('message', (message) => {
+    try {
+      const data = JSON.parse(message);
+      
+      if (data.type === 'cmd') {
+        const command = data.command;
+        console.log(`Executing: ${command}`);
+        
+        const parts = command.split(' ');
+        const cmd = parts[0];
+        const args = parts.slice(1);
+
+        const proc = spawn(cmd, args, { shell: true, cwd: PROJECT_ROOT });
+
+        proc.stdout.on('data', (outData) => {
+          ws.send(JSON.stringify({ type: 'output', content: outData.toString() }));
+        });
+
+        proc.stderr.on('data', (errData) => {
+          ws.send(JSON.stringify({ type: 'error', content: errData.toString() }));
+        });
+
+        proc.on('close', (code) => {
+          ws.send(JSON.stringify({ type: 'exit', code: code }));
+        });
+        
+        proc.on('error', (err) => {
+          ws.send(JSON.stringify({ type: 'error', content: err.toString() }));
+        });
+
+      } else if (data.type === 'list_dir') {
+        // Return the project file tree
+        console.log('Sending file tree...');
+        const tree = buildTree(PROJECT_ROOT);
+        ws.send(JSON.stringify({ type: 'file_tree', children: tree }));
+
+      } else if (data.type === 'read_file') {
+        // Read a file's contents and send back
+        const filePath = path.join(PROJECT_ROOT, data.path);
+        console.log(`Reading file: ${filePath}`);
+        
+        // Security: prevent path traversal
+        if (!filePath.startsWith(PROJECT_ROOT)) {
+          ws.send(JSON.stringify({ type: 'file_content', path: data.path, content: '[ACCESS DENIED]' }));
+          return;
+        }
+        
+        try {
+          const content = fs.readFileSync(filePath, 'utf-8');
+          ws.send(JSON.stringify({ type: 'file_content', path: data.path, content: content }));
+        } catch (e) {
+          ws.send(JSON.stringify({ type: 'file_content', path: data.path, content: `[Error reading file: ${e.message}]` }));
+        }
+      }
+    } catch (err) {
+      console.error('Error handling message:', err);
+    }
+  });
+
+  ws.on('close', () => {
+    console.log('Client disconnected.');
+  });
+});
+
