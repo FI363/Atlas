@@ -4,12 +4,42 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const PORT = 8080;
+const DEFAULT_PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8080;
 const PROJECT_ROOT = path.join(__dirname, '..'); // atlas/ directory
-const wss = new WebSocket.Server({ port: PORT });
 
-console.log(`Atlas Remote Engine starting on ws://localhost:${PORT}`);
-console.log(`Project root: ${PROJECT_ROOT}`);
+// Create the WebSocket server with retry logic when the requested port is in use.
+let wss;
+function startServer(port, maxAttempts = 20) {
+  let attempts = 0;
+
+  function tryPort(p) {
+    attempts++;
+    const server = new WebSocket.Server({ port: p });
+
+    server.on('listening', () => {
+      console.log(`Atlas Remote Engine starting on ws://localhost:${p}`);
+      console.log(`Project root: ${PROJECT_ROOT}`);
+    });
+
+    server.on('error', (err) => {
+      if (err && err.code === 'EADDRINUSE' && attempts < maxAttempts) {
+        console.warn(`Port ${p} in use, trying port ${p + 1}...`);
+        setTimeout(() => tryPort(p + 1), 200);
+        return;
+      }
+
+      console.error(`Failed to start WebSocket server on port ${p}:`, err && err.message ? err.message : err);
+      process.exit(1);
+    });
+
+    wss = server;
+    return server;
+  }
+
+  return tryPort(port);
+}
+
+startServer(DEFAULT_PORT);
 
 // Recursively build a file tree (max 2 levels deep to avoid huge payloads)
 function buildTree(dirPath, depth = 0, maxDepth = 3) {
