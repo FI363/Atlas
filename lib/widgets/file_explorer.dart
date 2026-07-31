@@ -20,6 +20,18 @@ class _FileExplorerState extends State<FileExplorer> {
 
     return _PanelFrame(
       title: 'EXPLORER',
+      actions: [
+        IconButton(
+          onPressed: () => _createEntry(context, isDirectory: false),
+          icon: const Icon(Icons.note_add_outlined, size: 18),
+          tooltip: 'New File',
+        ),
+        IconButton(
+          onPressed: () => _createEntry(context, isDirectory: true),
+          icon: const Icon(Icons.create_new_folder_outlined, size: 18),
+          tooltip: 'New Folder',
+        ),
+      ],
       child: tree.isEmpty
           ? const Center(
               child: Text(
@@ -32,6 +44,46 @@ class _FileExplorerState extends State<FileExplorer> {
               children: _buildTree(tree, 0, ''),
             ),
     );
+  }
+
+  Future<void> _createEntry(
+    BuildContext context, {
+    required bool isDirectory,
+  }) async {
+    final pathController = TextEditingController();
+    final entryPath = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(isDirectory ? 'New Folder' : 'New File'),
+        content: TextField(
+          controller: pathController,
+          autofocus: true,
+          decoration: InputDecoration(
+            labelText: 'Path',
+            hintText: isDirectory ? 'lib/widgets' : 'lib/new_file.dart',
+          ),
+          onSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, pathController.text.trim()),
+            child: const Text('Create'),
+          ),
+        ],
+      ),
+    );
+    pathController.dispose();
+
+    if (entryPath == null || entryPath.isEmpty) return;
+    if (isDirectory) {
+      widget.workspaceState.createDirectory(entryPath);
+    } else {
+      widget.workspaceState.createFile(entryPath);
+    }
   }
 
   List<Widget> _buildTree(List<dynamic> nodes, int depth, String parentPath) {
@@ -120,10 +172,15 @@ class _FileExplorerState extends State<FileExplorer> {
 }
 
 class _PanelFrame extends StatelessWidget {
-  const _PanelFrame({required this.title, required this.child});
+  const _PanelFrame({
+    required this.title,
+    required this.child,
+    this.actions = const [],
+  });
 
   final String title;
   final Widget child;
+  final List<Widget> actions;
 
   @override
   Widget build(BuildContext context) {
@@ -138,9 +195,12 @@ class _PanelFrame extends StatelessWidget {
             height: 42,
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(title, style: Theme.of(context).textTheme.labelMedium),
+              child: Row(
+                children: [
+                  Text(title, style: Theme.of(context).textTheme.labelMedium),
+                  const Spacer(),
+                  ...actions,
+                ],
               ),
             ),
           ),

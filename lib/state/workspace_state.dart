@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../config/atlas_config.dart';
 import '../services/engine_client.dart';
 
 /// Manages the UI state of the Atlas workspace, including panel visibility,
@@ -16,7 +17,10 @@ class WorkspaceState extends ChangeNotifier {
   bool _hasRequestedTree = false;
 
   WorkspaceState() {
-    engine.connect('ws://localhost:8080');
+    engine.connect(
+      url: AtlasConfig.engineUrl,
+      token: AtlasConfig.engineToken,
+    );
     engine.addListener(_onEngineUpdate);
   }
 
@@ -26,6 +30,9 @@ class WorkspaceState extends ChangeNotifier {
       _hasRequestedTree = true;
       engine.requestFileTree();
     }
+    final savedFilePath = engine.takeLastSavedFilePath();
+    if (savedFilePath != null) _drafts.remove(savedFilePath);
+    if (engine.takeWorkspaceChanged()) engine.requestFileTree();
     notifyListeners();
   }
 
@@ -41,6 +48,7 @@ class WorkspaceState extends ChangeNotifier {
 
   // Editor State
   final List<String> _openFiles = [];
+  final Map<String, String> _drafts = {};
   String? _activeFile;
 
   // Getters
@@ -51,6 +59,9 @@ class WorkspaceState extends ChangeNotifier {
   
   List<String> get openFiles => List.unmodifiable(_openFiles);
   String? get activeFile => _activeFile;
+  String? contentForFile(String filePath) =>
+      _drafts[filePath] ?? engine.getFileContent(filePath);
+  bool hasUnsavedChanges(String filePath) => _drafts.containsKey(filePath);
 
   // Mutators
   void toggleExplorer() {
@@ -101,6 +112,7 @@ class WorkspaceState extends ChangeNotifier {
     if (index == -1) return;
     
     _openFiles.removeAt(index);
+    _drafts.remove(filename);
     if (_openFiles.isEmpty) {
       _activeFile = null;
     } else if (_activeFile == filename) {
@@ -116,5 +128,24 @@ class WorkspaceState extends ChangeNotifier {
       notifyListeners();
     }
   }
-}
 
+  /// Sends an updated file to the authenticated companion engine.
+  void saveFile(String filePath, String content) {
+    engine.saveFile(filePath, content);
+  }
+
+  /// Keeps a local edit while the file is open or waiting for a save response.
+  void updateDraft(String filePath, String content) {
+    _drafts[filePath] = content;
+    notifyListeners();
+  }
+
+  void discardDraft(String filePath) {
+    _drafts.remove(filePath);
+    notifyListeners();
+  }
+
+  void createFile(String filePath) => engine.createFile(filePath);
+
+  void createDirectory(String directoryPath) => engine.createDirectory(directoryPath);
+}

@@ -1,0 +1,7 @@
+{
+  "name": "atlas",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "start npm --prefix backend start && flutter run -d chrome --dart-define=ATLAS_ENGINE_TOKEN=dev-token"
+  }
+}

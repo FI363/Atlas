@@ -6,6 +6,12 @@ const os = require('os');
 
 const DEFAULT_PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8080;
 const PROJECT_ROOT = path.join(__dirname, '..'); // atlas/ directory
+const ENGINE_TOKEN = process.env.ATLAS_ENGINE_TOKEN || 'dev-token';
+
+if (!ENGINE_TOKEN) {
+  console.error('ATLAS_ENGINE_TOKEN is required. Refusing to start an unauthenticated engine.');
+  process.exit(1);
+}
 
 // Create the WebSocket server with retry logic when the requested port is in use.
 let wss;
@@ -24,14 +30,17 @@ function startServer(port, maxAttempts = 20) {
     server.on('error', (err) => {
       if (err && err.code === 'EADDRINUSE' && attempts < maxAttempts) {
         console.warn(`Port ${p} in use, trying port ${p + 1}...`);
+        // Small delay before retrying to avoid a tight loop
         setTimeout(() => tryPort(p + 1), 200);
         return;
       }
 
+      // If it's not an address-in-use error or we've exhausted attempts, log and exit
       console.error(`Failed to start WebSocket server on port ${p}:`, err && err.message ? err.message : err);
       process.exit(1);
     });
 
+    // Assign the server so the rest of the file can attach handlers to `wss`.
     wss = server;
     return server;
   }
@@ -71,17 +80,49 @@ function buildTree(dirPath, depth = 0, maxDepth = 3) {
   return entries;
 }
 
-wss.on('connection', (ws) => {
-  console.log('Client connected from iPad!');
+// Resolve a client path while keeping every read and write inside the project.
+function resolveProjectPath(relativePath) {
+  if (typeof relativePath !== 'string' || relativePath.length === 0) return null;
+  const resolvedPath = path.resolve(PROJECT_ROOT, relativePath);
+  const projectPrefix = `${PROJECT_ROOT}${path.sep}`;
+  return resolvedPath.startsWith(projectPrefix) ? resolvedPath : null;
+}
 
-  ws.send(JSON.stringify({
-    type: 'system',
-    message: `Connected to Atlas Remote Engine (${os.type()} ${os.release()})`
-  }));
+function createWorkspaceEntry(relativePath, isDirectory) {
+  const filePath = resolveProjectPath(relativePath);
+  if (!filePath) throw new Error('Path must be inside the project');
+  if (fs.existsSync(filePath)) throw new Error('A file or folder already exists at that path');
+  if (!fs.existsSync(path.dirname(filePath))) throw new Error('Parent folder does not exist');
+
+  if (isDirectory) {
+    fs.mkdirSync(filePath);
+  } else {
+    fs.writeFileSync(filePath, '', 'utf-8');
+  }
+}
+
+wss.on('connection', (ws) => {
+  let isAuthenticated = false;
 
   ws.on('message', (message) => {
     try {
       const data = JSON.parse(message);
+
+      if (!isAuthenticated) {
+        if (data.type !== 'auth' || data.token !== ENGINE_TOKEN) {
+          ws.send(JSON.stringify({type: 'error', content: 'Authentication failed.\n'}));
+          ws.close(1008, 'Authentication required');
+          return;
+        }
+
+        isAuthenticated = true;
+        console.log('Authenticated Atlas client connected.');
+        ws.send(JSON.stringify({
+          type: 'system',
+          message: `Connected to Atlas Remote Engine (${os.type()} ${os.release()})`,
+        }));
+        return;
+      }
       
       if (data.type === 'cmd') {
         const command = data.command;
@@ -117,11 +158,10 @@ wss.on('connection', (ws) => {
 
       } else if (data.type === 'read_file') {
         // Read a file's contents and send back
-        const filePath = path.join(PROJECT_ROOT, data.path);
+        const filePath = resolveProjectPath(data.path);
         console.log(`Reading file: ${filePath}`);
         
-        // Security: prevent path traversal
-        if (!filePath.startsWith(PROJECT_ROOT)) {
+        if (!filePath) {
           ws.send(JSON.stringify({ type: 'file_content', path: data.path, content: '[ACCESS DENIED]' }));
           return;
         }
@@ -131,6 +171,42 @@ wss.on('connection', (ws) => {
           ws.send(JSON.stringify({ type: 'file_content', path: data.path, content: content }));
         } catch (e) {
           ws.send(JSON.stringify({ type: 'file_content', path: data.path, content: `[Error reading file: ${e.message}]` }));
+        }
+      } else if (data.type === 'write_file') {
+        const filePath = resolveProjectPath(data.path);
+        if (!filePath || typeof data.content !== 'string') {
+          ws.send(JSON.stringify({type: 'error', content: 'Invalid file save request.\n'}));
+          return;
+        }
+
+        try {
+          const stat = fs.statSync(filePath);
+          if (!stat.isFile()) throw new Error('Path is not a file');
+          fs.writeFileSync(filePath, data.content, 'utf-8');
+          ws.send(JSON.stringify({
+            type: 'file_saved',
+            path: data.path,
+            content: data.content,
+          }));
+        } catch (e) {
+          ws.send(JSON.stringify({
+            type: 'error',
+            content: `Could not save ${data.path}: ${e.message}\n`,
+          }));
+        }
+      } else if (data.type === 'create_file' || data.type === 'create_directory') {
+        const isDirectory = data.type === 'create_directory';
+        try {
+          createWorkspaceEntry(data.path, isDirectory);
+          ws.send(JSON.stringify({
+            type: 'workspace_changed',
+            message: `${isDirectory ? 'Created folder' : 'Created file'} ${data.path}`,
+          }));
+        } catch (e) {
+          ws.send(JSON.stringify({
+            type: 'error',
+            content: `Could not create ${data.path}: ${e.message}\n`,
+          }));
         }
       }
     } catch (err) {
@@ -142,4 +218,3 @@ wss.on('connection', (ws) => {
     console.log('Client disconnected.');
   });
 });
-

@@ -13,6 +13,8 @@ class EngineClient extends ChangeNotifier {
   // File system data
   List<Map<String, dynamic>> _fileTree = [];
   final Map<String, String> _fileContents = {};
+  String? _lastSavedFilePath;
+  bool _workspaceChanged = false;
 
   bool get isConnected => _isConnected;
   List<String> get terminalOutput => List.unmodifiable(_terminalOutput);
@@ -21,14 +23,34 @@ class EngineClient extends ChangeNotifier {
   /// Get cached file content (or null if not loaded yet)
   String? getFileContent(String path) => _fileContents[path];
 
-  /// Connect to the remote engine running on the laptop
-  void connect(String wsUrl) {
+  /// Returns and clears the most recently confirmed save path.
+  String? takeLastSavedFilePath() {
+    final path = _lastSavedFilePath;
+    _lastSavedFilePath = null;
+    return path;
+  }
+
+  /// Returns whether the engine confirmed a file-system change since last read.
+  bool takeWorkspaceChanged() {
+    final changed = _workspaceChanged;
+    _workspaceChanged = false;
+    return changed;
+  }
+
+  /// Connect to the remote engine and authenticate before sending requests.
+  Future<void> connect({required String url, required String token}) async {
+    if (token.isEmpty) {
+      _appendTerminalOutput(
+        'Atlas engine token is missing. Rebuild with --dart-define=ATLAS_ENGINE_TOKEN=...\n',
+      );
+      return;
+    }
+
     try {
-      _channel = WebSocketChannel.connect(Uri.parse(wsUrl));
-      
+      _channel = WebSocketChannel.connect(Uri.parse(url));
+
       _channel!.stream.listen(
         (message) {
-          _isConnected = true;
           _handleIncomingMessage(message);
         },
         onDone: () {
@@ -42,10 +64,14 @@ class EngineClient extends ChangeNotifier {
           notifyListeners();
         },
       );
-      
+
+      await _channel!.ready;
+      _isConnected = true;
+      _channel!.sink.add(jsonEncode({'type': 'auth', 'token': token}));
       notifyListeners();
     } catch (e) {
-      _appendTerminalOutput('Failed to connect: $e\n');
+      _isConnected = false;
+      _appendTerminalOutput('Failed to connect to Atlas engine: $e\n');
       notifyListeners();
     }
   }
@@ -86,6 +112,32 @@ class EngineClient extends ChangeNotifier {
     }));
   }
 
+  /// Persist [content] to an existing file in the opened project.
+  void saveFile(String filePath, String content) {
+    if (!_isConnected) {
+      _appendTerminalOutput('Cannot save file: Not connected to engine.\n');
+      return;
+    }
+    _channel!.sink.add(jsonEncode({
+      'type': 'write_file',
+      'path': filePath,
+      'content': content,
+    }));
+  }
+
+  void createFile(String filePath) => _createWorkspaceEntry('create_file', filePath);
+
+  void createDirectory(String directoryPath) =>
+      _createWorkspaceEntry('create_directory', directoryPath);
+
+  void _createWorkspaceEntry(String type, String path) {
+    if (!_isConnected) {
+      _appendTerminalOutput('Cannot create workspace entry: Not connected to engine.\n');
+      return;
+    }
+    _channel!.sink.add(jsonEncode({'type': type, 'path': path}));
+  }
+
   void _handleIncomingMessage(String rawData) {
     try {
       final data = jsonDecode(rawData);
@@ -107,6 +159,15 @@ class EngineClient extends ChangeNotifier {
         _fileContents[data['path']] = data['content'];
         notifyListeners();
         return; // Already notified
+      } else if (type == 'file_saved') {
+        _fileContents[data['path']] = data['content'];
+        _lastSavedFilePath = data['path'];
+        _appendTerminalOutput('Saved ${data['path']}\n');
+        return;
+      } else if (type == 'workspace_changed') {
+        _workspaceChanged = true;
+        _appendTerminalOutput('${data['message']}\n');
+        return;
       }
     } catch (e) {
       // Raw string fallback
@@ -119,4 +180,3 @@ class EngineClient extends ChangeNotifier {
     notifyListeners();
   }
 }
-
