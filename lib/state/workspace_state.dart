@@ -1,6 +1,7 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 
 import '../services/engine_client.dart';
+import 'environment_stub.dart' if (dart.library.io) 'environment_io.dart';
 
 /// Manages the UI state of the Atlas workspace, including panel visibility,
 /// active tabs, and open files. This provides a reactive foundation for iPad layouts.
@@ -15,9 +16,45 @@ class WorkspaceState extends ChangeNotifier {
 
   bool _hasRequestedTree = false;
 
+  static const int _backendPort = 8080;
+  static const String _engineHostOverride = String.fromEnvironment(
+    'ENGINE_HOST',
+    defaultValue: '',
+  );
+
   WorkspaceState() {
-    engine.connect('ws://localhost:8080');
+    if (!isFlutterTest) {
+      engine.connect(_resolveEngineUrl());
+    }
     engine.addListener(_onEngineUpdate);
+  }
+
+  String _resolveEngineUrl() {
+    final rawHost = _engineHostOverride.isNotEmpty
+        ? _engineHostOverride
+        : (kIsWeb ? Uri.base.queryParameters['engineHost'] ?? Uri.base.host : 'localhost');
+
+    if (rawHost.isEmpty) {
+      return _defaultEngineUrl();
+    }
+
+    final uri = Uri.tryParse(rawHost);
+    if (uri != null && uri.hasScheme && uri.host.isNotEmpty) {
+      return rawHost;
+    }
+
+    final host = rawHost.contains(':') ? rawHost : '$rawHost:$_backendPort';
+    final webScheme = Uri.base.scheme == 'https' ? 'wss' : 'ws';
+    final scheme = kIsWeb ? webScheme : 'ws';
+
+    return '$scheme://$host';
+  }
+
+  String _defaultEngineUrl() {
+    final webScheme = Uri.base.scheme == 'https' ? 'wss' : 'ws';
+    final scheme = kIsWeb ? webScheme : 'ws';
+    final host = kIsWeb ? Uri.base.host : 'localhost';
+    return '$scheme://$host:$_backendPort';
   }
 
   void _onEngineUpdate() {
@@ -48,7 +85,7 @@ class WorkspaceState extends ChangeNotifier {
   bool get isAiPanelVisible => _isAiPanelVisible;
   bool get isTerminalVisible => _isTerminalVisible;
   String get activeActivity => _activeActivity;
-  
+
   List<String> get openFiles => List.unmodifiable(_openFiles);
   String? get activeFile => _activeFile;
 
@@ -67,6 +104,14 @@ class WorkspaceState extends ChangeNotifier {
   void toggleTerminal() {
     _isTerminalVisible = !_isTerminalVisible;
     notifyListeners();
+  }
+
+  void runProject() {
+    if (!_isTerminalVisible) {
+      _isTerminalVisible = true;
+    }
+    notifyListeners();
+    engine.runCommand('flutter run -d windows --no-web');
   }
 
   void setActiveActivity(String activity) {
@@ -99,7 +144,7 @@ class WorkspaceState extends ChangeNotifier {
   void closeFile(String filename) {
     final index = _openFiles.indexOf(filename);
     if (index == -1) return;
-    
+
     _openFiles.removeAt(index);
     if (_openFiles.isEmpty) {
       _activeFile = null;
@@ -117,4 +162,3 @@ class WorkspaceState extends ChangeNotifier {
     }
   }
 }
-

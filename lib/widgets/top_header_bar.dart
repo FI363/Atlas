@@ -11,7 +11,7 @@ class TopHeaderBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    
+
     return Container(
       height: 48,
       decoration: BoxDecoration(
@@ -31,15 +31,15 @@ class TopHeaderBar extends StatelessWidget {
               color: const Color(0xFFCCCCCC),
             ),
           ),
-          
+
           const Spacer(),
-          
+
           // Action Buttons
           _HeaderButton(
             icon: Icons.play_arrow_rounded,
             tooltip: 'Run Project',
             color: const Color(0xFF4CAF50), // Green for run
-            onTap: () {},
+            onTap: workspaceState.runProject,
           ),
           const SizedBox(width: 8),
           _HeaderButton(
@@ -80,7 +80,7 @@ class _HeaderButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final defaultColor = isActive ? Colors.white : const Color(0xFF8E8E8E);
-    
+
     return Tooltip(
       message: tooltip,
       child: Material(
@@ -96,11 +96,7 @@ class _HeaderButton extends StatelessWidget {
               color: isActive ? const Color(0xFF37373D) : Colors.transparent,
               borderRadius: BorderRadius.circular(6),
             ),
-            child: Icon(
-              icon,
-              size: 20,
-              color: color ?? defaultColor,
-            ),
+            child: Icon(icon, size: 20, color: color ?? defaultColor),
           ),
         ),
       ),
