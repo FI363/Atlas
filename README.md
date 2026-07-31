@@ -14,7 +14,7 @@ Atlas is a prototype IDE-style Flutter app with a remote backend engine. It prov
 
 1. Start the backend engine:
    - `cd backend`
-   - `npm start`
+   - `npm run ipad`
 2. Run the Flutter app:
    - `flutter run`
 
