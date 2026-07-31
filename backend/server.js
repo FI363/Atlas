@@ -20,10 +20,18 @@ function startServer(port, maxAttempts = 20) {
 
   function tryPort(p) {
     attempts++;
-    const server = new WebSocket.Server({ port: p });
+    const server = new WebSocket.Server({ port: p, host: '0.0.0.0' });
 
     server.on('listening', () => {
-      console.log(`Atlas Remote Engine starting on ws://localhost:${p}`);
+      console.log(`Atlas Remote Engine starting on port ${p}`);
+      const networkInterfaces = os.networkInterfaces();
+      for (const name of Object.keys(networkInterfaces)) {
+        for (const net of networkInterfaces[name]) {
+          if (net.family === 'IPv4' && !net.internal) {
+            console.log(`  Accessible on LAN at: ws://${net.address}:${p}`);
+          }
+        }
+      }
       console.log(`Project root: ${PROJECT_ROOT}`);
     });
 
