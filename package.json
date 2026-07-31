@@ -2,6 +2,11 @@
   "name": "atlas",
   "version": "1.0.0",
   "scripts": {
-    "dev": "start npm --prefix backend start && flutter run -d chrome --dart-define=ATLAS_ENGINE_TOKEN=dev-token"
+    "dev": "kill-port 8080 8081 && concurrently -k \"npm --prefix backend start\" \"flutter run -d chrome --dart-define=ATLAS_ENGINE_TOKEN=dev-token\"",
+    "ipad": "kill-port 8080 8081 && concurrently -k \"npm --prefix backend start\" \"flutter run -d web-server --web-hostname 0.0.0.0 --web-port 8081 --dart-define=ATLAS_ENGINE_TOKEN=dev-token\""
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.4",
+    "kill-port": "^2.0.1"
   }
 }
