@@ -2,13 +2,32 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-/// Service for connecting to the remote Atlas Backend Engine via WebSockets
+/// WebSocket client for the companion Atlas backend engine.
+///
+/// Handles authentication, terminal commands, file I/O, process termination,
+/// search, git operations, and AI Agent prompt messages over JSON-over-WS protocol.
 class EngineClient extends ChangeNotifier {
   WebSocketChannel? _channel;
   bool _isConnected = false;
-  
+
   // Terminal output stream
   final List<String> _terminalOutput = [];
+
+  // AI Agent message history
+  final List<Map<String, dynamic>> _aiMessages = [
+    {
+      'isUser': false,
+      'content': 'Hello! I am your Atlas AI Coding Agent. Ask me questions, or click a quick-action chip to analyze active code.',
+    }
+  ];
+
+  // Search results stream
+  List<Map<String, dynamic>> _searchResults = [];
+  String _searchQuery = '';
+
+  // Git status data
+  String _gitBranch = 'main';
+  List<Map<String, dynamic>> _gitFiles = [];
 
   // File system data
   List<Map<String, dynamic>> _fileTree = [];
@@ -16,18 +35,28 @@ class EngineClient extends ChangeNotifier {
   String? _lastSavedFilePath;
   bool _workspaceChanged = false;
 
+  String _projectName = 'atlas';
+  String _cwd = '';
+
   bool get isConnected => _isConnected;
+  String get projectName => _projectName;
+  String get cwd => _cwd;
   List<String> get terminalOutput => List.unmodifiable(_terminalOutput);
+  List<Map<String, dynamic>> get aiMessages => List.unmodifiable(_aiMessages);
+  List<Map<String, dynamic>> get searchResults => List.unmodifiable(_searchResults);
+  String get searchQuery => _searchQuery;
+  String get gitBranch => _gitBranch;
+  List<Map<String, dynamic>> get gitFiles => List.unmodifiable(_gitFiles);
   List<Map<String, dynamic>> get fileTree => _fileTree;
-  
-  /// Get cached file content (or null if not loaded yet)
+
+  /// Get cached file content (or null if not loaded yet).
   String? getFileContent(String path) => _fileContents[path];
 
   /// Returns and clears the most recently confirmed save path.
   String? takeLastSavedFilePath() {
-    final path = _lastSavedFilePath;
+    final p = _lastSavedFilePath;
     _lastSavedFilePath = null;
-    return path;
+    return p;
   }
 
   /// Returns whether the engine confirmed a file-system change since last read.
@@ -37,12 +66,11 @@ class EngineClient extends ChangeNotifier {
     return changed;
   }
 
-  /// Connect to the remote engine and authenticate before sending requests.
+  // ── Connection ──────────────────────────────────────────────────────────
+
   Future<void> connect({required String url, required String token}) async {
     if (token.isEmpty) {
-      _appendTerminalOutput(
-        'Atlas engine token is missing. Rebuild with --dart-define=ATLAS_ENGINE_TOKEN=...\n',
-      );
+      _log('Engine token is missing. Rebuild with --dart-define=ATLAS_ENGINE_TOKEN=...\n');
       return;
     }
 
@@ -50,132 +78,206 @@ class EngineClient extends ChangeNotifier {
       _channel = WebSocketChannel.connect(Uri.parse(url));
 
       _channel!.stream.listen(
-        (message) {
-          _handleIncomingMessage(message);
-        },
+        _handleMessage,
         onDone: () {
           _isConnected = false;
-          _appendTerminalOutput('Disconnected from remote engine.\n');
+          _log('Disconnected from engine.\n');
           notifyListeners();
         },
         onError: (error) {
           _isConnected = false;
-          _appendTerminalOutput('Connection error: $error\n');
+          _log('Connection error: $error\n');
           notifyListeners();
         },
       );
 
       await _channel!.ready;
       _isConnected = true;
-      _channel!.sink.add(jsonEncode({'type': 'auth', 'token': token}));
+      _send({'type': 'auth', 'token': token});
       notifyListeners();
     } catch (e) {
       _isConnected = false;
-      _appendTerminalOutput('Failed to connect to Atlas engine: $e\n');
+      _log('Failed to connect: $e\n');
       notifyListeners();
     }
   }
 
-  /// Close the WebSocket connection
   void disconnect() {
     _channel?.sink.close();
     _isConnected = false;
     notifyListeners();
   }
 
-  /// Execute a shell command on the remote engine
+  // ── Settings sync ──────────────────────────────────────────────────────
+
+  void sendSettings(Map<String, dynamic> settingsPayload) {
+    if (_isConnected) {
+      _send({'type': 'update_settings', 'settings': settingsPayload});
+    }
+  }
+
+  // ── Terminal Commands ──────────────────────────────────────────────────
+
   void runCommand(String command) {
     if (!_isConnected) {
-      _appendTerminalOutput('Cannot run command: Not connected to engine.\n');
+      _log('Not connected to engine.\n');
       return;
     }
-    
-    _appendTerminalOutput('\$ $command\n');
-    _channel!.sink.add(jsonEncode({
-      'type': 'cmd',
-      'command': command,
-    }));
+    if (command.trim().toLowerCase() == 'cls' || command.trim().toLowerCase() == 'clear') {
+      clearTerminal();
+      return;
+    }
+    _log('\$ $command\n');
+    _send({'type': 'cmd', 'command': command});
   }
 
-  /// Request the project file tree from the backend
+  void killProcess() {
+    if (_isConnected) {
+      _send({'type': 'kill_cmd'});
+    }
+  }
+
+  void clearTerminal() {
+    _terminalOutput.clear();
+    notifyListeners();
+  }
+
+  // ── AI Agent Communication ─────────────────────────────────────────────
+
+  void sendAiPrompt(String prompt, {String? contextCode, Map<String, dynamic>? settingsPayload}) {
+    _aiMessages.add({'isUser': true, 'content': prompt});
+    notifyListeners();
+
+    if (!_isConnected) {
+      _aiMessages.add({
+        'isUser': false,
+        'content': 'Engine disconnected. Please start backend server to run AI agent queries.',
+      });
+      notifyListeners();
+      return;
+    }
+
+    _send({
+      'type': 'ai_prompt',
+      'prompt': prompt,
+      'contextCode': contextCode ?? '',
+      'settings': settingsPayload ?? {},
+    });
+  }
+
+  // ── Workspace Search & Git ──────────────────────────────────────────────
+
+  void searchWorkspace(String query) {
+    _searchQuery = query;
+    if (_isConnected) {
+      _send({'type': 'search_files', 'query': query});
+    }
+  }
+
+  void fetchGitStatus() {
+    if (_isConnected) {
+      _send({'type': 'git_status'});
+    }
+  }
+
+  void commitGit(String message) {
+    if (_isConnected) {
+      _send({'type': 'git_commit', 'message': message});
+    }
+  }
+
+  // ── File System ────────────────────────────────────────────────────────
+
   void requestFileTree() {
-    if (!_isConnected) return;
-    _channel!.sink.add(jsonEncode({'type': 'list_dir'}));
+    if (_isConnected) _send({'type': 'list_dir'});
   }
 
-  /// Request a file's contents from the backend
   void requestFileContent(String filePath) {
-    if (!_isConnected) return;
-    _channel!.sink.add(jsonEncode({
-      'type': 'read_file',
-      'path': filePath,
-    }));
+    if (_isConnected) _send({'type': 'read_file', 'path': filePath});
   }
 
-  /// Persist [content] to an existing file in the opened project.
   void saveFile(String filePath, String content) {
     if (!_isConnected) {
-      _appendTerminalOutput('Cannot save file: Not connected to engine.\n');
+      _log('Cannot save: not connected.\n');
       return;
     }
-    _channel!.sink.add(jsonEncode({
-      'type': 'write_file',
-      'path': filePath,
-      'content': content,
-    }));
+    _send({'type': 'write_file', 'path': filePath, 'content': content});
   }
 
-  void createFile(String filePath) => _createWorkspaceEntry('create_file', filePath);
+  void createFile(String path) => _createEntry('create_file', path);
+  void createDirectory(String path) => _createEntry('create_directory', path);
 
-  void createDirectory(String directoryPath) =>
-      _createWorkspaceEntry('create_directory', directoryPath);
+  // ── Internals ─────────────────────────────────────────────────────────
 
-  void _createWorkspaceEntry(String type, String path) {
+  void _createEntry(String type, String path) {
     if (!_isConnected) {
-      _appendTerminalOutput('Cannot create workspace entry: Not connected to engine.\n');
+      _log('Cannot create entry: not connected.\n');
       return;
     }
-    _channel!.sink.add(jsonEncode({'type': type, 'path': path}));
+    _send({'type': type, 'path': path});
   }
 
-  void _handleIncomingMessage(String rawData) {
+  void _send(Map<String, dynamic> payload) {
+    _channel?.sink.add(jsonEncode(payload));
+  }
+
+  void _handleMessage(dynamic rawData) {
     try {
-      final data = jsonDecode(rawData);
-      final type = data['type'];
-      
-      if (type == 'system') {
-        _appendTerminalOutput('[SYSTEM] ${data['message']}\n');
-      } else if (type == 'output') {
-        _appendTerminalOutput(data['content']);
-      } else if (type == 'error') {
-        _appendTerminalOutput('[ERROR] ${data['content']}');
-      } else if (type == 'exit') {
-        _appendTerminalOutput('[Process exited with code ${data['code']}]\n');
-      } else if (type == 'file_tree') {
-        _fileTree = List<Map<String, dynamic>>.from(data['children']);
-        notifyListeners();
-        return; // Already notified
-      } else if (type == 'file_content') {
-        _fileContents[data['path']] = data['content'];
-        notifyListeners();
-        return; // Already notified
-      } else if (type == 'file_saved') {
-        _fileContents[data['path']] = data['content'];
-        _lastSavedFilePath = data['path'];
-        _appendTerminalOutput('Saved ${data['path']}\n');
-        return;
-      } else if (type == 'workspace_changed') {
-        _workspaceChanged = true;
-        _appendTerminalOutput('${data['message']}\n');
-        return;
+      final data = jsonDecode(rawData as String);
+      final type = data['type'] as String?;
+
+      switch (type) {
+        case 'system':
+          if (data['projectName'] != null) {
+            _projectName = data['projectName'] as String;
+          }
+          if (data['cwd'] != null) {
+            _cwd = data['cwd'] as String;
+          }
+          _log('[SYSTEM] ${data['message']}\n');
+        case 'output':
+          _log(data['content'] as String);
+        case 'error':
+          _log('[ERROR] ${data['content']}');
+        case 'exit':
+          _log('[Process exited with code ${data['code']}]\n');
+        case 'ai_response':
+          _aiMessages.add({'isUser': false, 'content': data['content'] as String});
+          notifyListeners();
+          return;
+        case 'search_results':
+          _searchResults = List<Map<String, dynamic>>.from(data['results']);
+          notifyListeners();
+          return;
+        case 'git_status_result':
+          _gitBranch = data['branch'] as String? ?? 'main';
+          _gitFiles = List<Map<String, dynamic>>.from(data['files'] ?? []);
+          notifyListeners();
+          return;
+        case 'file_tree':
+          _fileTree = List<Map<String, dynamic>>.from(data['children']);
+          notifyListeners();
+          return;
+        case 'file_content':
+          _fileContents[data['path'] as String] = data['content'] as String;
+          notifyListeners();
+          return;
+        case 'file_saved':
+          _fileContents[data['path'] as String] = data['content'] as String;
+          _lastSavedFilePath = data['path'] as String;
+          _log('Saved ${data['path']}\n');
+          return;
+        case 'workspace_changed':
+          _workspaceChanged = true;
+          _log('${data['message']}\n');
+          return;
       }
     } catch (e) {
-      // Raw string fallback
-      _appendTerminalOutput('$rawData\n');
+      _log('$rawData\n');
     }
   }
 
-  void _appendTerminalOutput(String text) {
+  void _log(String text) {
     _terminalOutput.add(text);
     notifyListeners();
   }

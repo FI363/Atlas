@@ -1,56 +1,83 @@
 # Atlas
 
-Atlas is a Flutter workspace client with a companion Node.js engine that runs
-on your development computer.
+A Flutter-based code editor / IDE that runs in the browser (targeting iPad Safari) with a companion Node.js "engine" on your development machine providing file-system access and shell execution over WebSockets.
 
-## Run Atlas locally
+## Prerequisites
 
-1. Start the engine from the project root. Choose a long, private token:
+- **Node.js** ≥ 18
+- **Flutter SDK** ≥ 3.9
+- Both devices on the **same Wi-Fi network** (for iPad mode)
 
-   ```powershell
-   $env:ATLAS_ENGINE_TOKEN = 'replace-with-a-long-random-token'
-   npm --prefix backend start
-   ```
+## Quick Start (desktop browser)
 
-2. Run the Flutter application with the same token:
-
-   ```powershell
-   flutter run --dart-define=ATLAS_ENGINE_TOKEN=replace-with-a-long-random-token
-   ```
-
-## Run on an iPad over your local network
-
-The iPad must be on the same trusted Wi-Fi network as the computer running the
-engine. Find the computer's LAN IP address, then start the engine as above and
-build/run Flutter with that address and the same token:
-
-```text
---dart-define=ATLAS_ENGINE_URL=ws://192.168.1.50:8080
---dart-define=ATLAS_ENGINE_TOKEN=replace-with-a-long-random-token
+```powershell
+npm install
+npm run dev
 ```
 
-Never expose port 8080 to the public internet. The engine can read project
-files, save edits, and run commands, so it is intended only for a private local
-network.
+This starts the engine on port `8080` and opens the Flutter app in Chrome.
 
-Open a file in the Explorer, edit it in the central editor, then use the
-**Save** action in the editor status bar. Atlas currently writes only existing
-files inside this project; it cannot create files or save outside the workspace.
+## Run on iPad over LAN
 
-Use the Explorer header's **New File** and **New Folder** controls to create
-entries. Enter a relative workspace path such as `lib/widgets/sidebar.dart`.
-Atlas will never overwrite an existing entry and requires the parent folder to
-already exist.
+### 1. Find your laptop's LAN IP
 
-## Getting Started
+```powershell
+ipconfig
+```
 
-This project is a starting point for a Flutter application.
+Look for the **IPv4 Address** under your Wi-Fi adapter (e.g. `192.168.1.50`).
 
-A few resources to get you started if this is your first Flutter project:
+### 2. Open Windows Firewall for ports 8080 and 8081
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+```powershell
+# Run PowerShell as Administrator
+netsh advfirewall firewall add rule name="Atlas Engine WS" dir=in action=allow protocol=TCP localport=8080
+netsh advfirewall firewall add rule name="Atlas Flutter Web" dir=in action=allow protocol=TCP localport=8081
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+### 3. Start Atlas in iPad mode
+
+```powershell
+npm run ipad
+```
+
+This starts:
+- The WebSocket engine on `0.0.0.0:8080` (all interfaces)
+- The Flutter web server on `0.0.0.0:8081`
+
+### 4. Open on iPad
+
+In Safari, navigate to:
+
+```
+http://<YOUR_LAN_IP>:8081
+```
+
+The app automatically rewrites `ws://localhost:8080` → `ws://<YOUR_LAN_IP>:8080` so the iPad connects to the engine without extra flags.
+
+## Available npm scripts
+
+| Script | Description |
+|--------|-------------|
+| `npm run dev` | Engine + Chrome (local development) |
+| `npm run ipad` | Engine + web-server on `0.0.0.0` (LAN access) |
+| `npm run engine` | Engine only (port 8080) |
+
+## Architecture
+
+```
+iPad (Safari)                    Laptop
+┌─────────────────┐   WebSocket   ┌──────────────────┐
+│  Flutter Web UI  │ ◄──────────► │  Node.js Engine   │
+│  (port 8081)     │   :8080      │  (server.js)      │
+│                  │              │  • File I/O       │
+│  • Editor        │              │  • Shell commands  │
+│  • File Explorer │              │  • Auth (token)    │
+│  • Terminal      │              └──────────────────┘
+│  • AI Panel      │
+└─────────────────┘
+```
+
+## Security
+
+The engine can read/write project files and execute shell commands. **Never expose ports 8080/8081 to the public internet.** This is designed for trusted local networks only. Authentication uses a shared token passed via `--dart-define`.

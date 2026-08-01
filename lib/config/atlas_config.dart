@@ -2,31 +2,35 @@ import 'package:flutter/foundation.dart';
 
 /// Build-time settings for the companion Atlas engine.
 ///
-/// Supply values with `--dart-define` when running or building the app. The
-/// default endpoint supports local desktop development; an iPad build must use
-/// the computer's LAN address instead of `localhost`.
+/// Supply values with `--dart-define` when running or building the app.
+/// When running via `npm run ipad`, the default `ws://localhost:8080` is
+/// automatically rewritten to use the browser's host so that iPads on the
+/// same LAN can reach the engine without extra flags.
 abstract final class AtlasConfig {
   static String get engineUrl {
     String url = const String.fromEnvironment('ATLAS_ENGINE_URL');
-    
-    // If not provided, fallback to a sensible default
-    if (url.isEmpty) {
-      url = 'ws://localhost:8080';
-    }
 
-    // If we're on the web and the URL points to localhost, we aggressively 
-    // rewrite it to use the browser's current host to ensure devices like 
-    // iPads can connect to the dev server on the local network.
+    if (url.isEmpty) url = 'ws://localhost:8080';
+
+    // On web, rewrite localhost → the host the page was served from so that
+    // remote devices (e.g. iPad on the same Wi-Fi) connect to the right IP.
     if (kIsWeb) {
       final host = Uri.base.host;
-      if (host.isNotEmpty && (url.contains('localhost') || url.contains('127.0.0.1'))) {
-        url = url.replaceAll('localhost', host).replaceAll('127.0.0.1', host);
+
+      if (host.isNotEmpty &&
+          (url.contains('localhost') || url.contains('127.0.0.1'))) {
+        url = url
+            .replaceAll('localhost', host)
+            .replaceAll('127.0.0.1', host);
       }
+
+      // Upgrade to wss:// when the page itself was loaded over HTTPS.
       if (Uri.base.scheme == 'https' && url.startsWith('ws://')) {
         url = url.replaceFirst('ws://', 'wss://');
       }
     }
-    
+
+    debugPrint('Atlas engine URL: $url');
     return url;
   }
 

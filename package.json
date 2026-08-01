@@ -1,12 +1,13 @@
 {
   "name": "atlas",
   "version": "1.0.0",
+  "private": true,
   "scripts": {
-    "dev": "kill-port 8080 8081 && concurrently -k \"npm --prefix backend start\" \"flutter run -d chrome --dart-define=ATLAS_ENGINE_TOKEN=dev-token\"",
-    "ipad": "kill-port 8080 8081 && concurrently -k \"npm --prefix backend start\" \"flutter run -d web-server --web-hostname 0.0.0.0 --web-port 8081 --dart-define=ATLAS_ENGINE_TOKEN=dev-token\""
+    "engine": "npm --prefix backend start",
+    "dev": "concurrently -k \"npm run engine\" \"flutter run -d chrome --dart-define=ATLAS_ENGINE_TOKEN=dev-token\"",
+    "ipad": "concurrently -k \"npm run engine\" \"flutter run -d web-server --web-hostname 0.0.0.0 --web-port 8081 --dart-define=ATLAS_ENGINE_TOKEN=dev-token\""
   },
   "devDependencies": {
-    "concurrently": "^10.0.4",
-    "kill-port": "^2.0.1"
+    "concurrently": "^10.0.4"
   }
 }
