@@ -44,7 +44,7 @@ class AtlasSettings {
   String engineUrl = 'ws://localhost:8080';
 
   // ── GitHub Integration ───────────────────────────────────────────────────
-  String githubToken = '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';
+  String githubToken = '';
   String githubUsername = 'FI363';
 
   // ── Theme / UI ────────────────────────────────────────────────────────────
