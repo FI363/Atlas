@@ -78,6 +78,24 @@ iPad (Safari)                    Laptop
 └─────────────────┘
 ```
 
-## Security
+## AI Panel Integration
+
+This project is configured to work with the built-in AI agent in your IDE (e.g., VS Code's AI sidebar). To enable full code-aware AI assistance:
+
+1. Open the project folder in VS Code
+2. Ensure the AI extension is installed and enabled
+3. The `.vscode/settings.json` configures the project root as the AI source context
+4. Use prompts like:
+   - "What does this function do?"
+   - "Add a new button to the Flutter UI"
+   - "Explain the build.gradle configuration"
+
+The AI panel can browse and suggest changes to Dart/Flutter code, access dependencies (`pubspec.yaml`), and modify platform-specific code.
 
 The engine can read/write project files and execute shell commands. **Never expose ports 8080/8081 to the public internet.** This is designed for trusted local networks only. Authentication uses a shared token passed via `--dart-define`.
+
+## Atlas AI and workspace persistence
+
+Use **Settings → AI Agent** to choose the provider, model, endpoint, and credentials. Atlas uses OpenRouter's OpenAI-compatible `/api/v1` API; it does not require Claude Code or Anthropic environment variables. The AI panel accepts text/files/images and clipboard image paste (`Ctrl+V` on Windows).
+
+Atlas remembers the selected workspace folder and user settings in the per-user `~/.atlas` state directory. Opening another folder changes the remembered workspace; restarting Atlas does not reset it.

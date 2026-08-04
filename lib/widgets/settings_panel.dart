@@ -4,14 +4,7 @@ import '../state/atlas_settings.dart';
 import '../state/workspace_state.dart';
 
 /// Full VS Code-style Settings panel wired to all WorkspaceState settings.
-///
-/// Sections:
-///  1. Editor            – font, size, tab width, line numbers, word wrap, auto-save
-///  2. Terminal          – font size, history limit, default shell
-///  3. Run / Build       – default run command
-///  4. AI Agent          – provider selection + per-provider options
-///  5. Engine Connection – URL and token
-///  6. Interface         – minimap, breadcrumbs, smooth scrolling
+/// Responsive and adaptive across screen sizes and resizable panel widths.
 class SettingsPanel extends StatefulWidget {
   const SettingsPanel({super.key, required this.workspaceState});
 
@@ -38,7 +31,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
           // Header
           Container(
             height: 38,
-            padding: const EdgeInsets.symmetric(horizontal: 16),
+            padding: const EdgeInsets.symmetric(horizontal: 14),
             decoration: const BoxDecoration(
               color: Color(0xFF252526),
               border: Border(bottom: BorderSide(color: Color(0xFF3C3C3C))),
@@ -46,7 +39,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
             child: Row(
               children: [
                 const Icon(Icons.settings_outlined, size: 16, color: Color(0xFF9D9D9D)),
-                const SizedBox(width: 10),
+                const SizedBox(width: 8),
                 const Text(
                   'SETTINGS',
                   style: TextStyle(
@@ -170,6 +163,30 @@ class _SettingsPanelState extends State<SettingsPanel> {
                       current: s.aiProvider,
                       onChanged: (v) { s.aiProvider = v; _save(); },
                     ),
+                    if (s.aiProvider == AiProvider.openRouter) ...[
+                      _TextInputTile(
+                        label: 'OpenRouter API Endpoint',
+                        subtitle: 'OpenRouter API base URL',
+                        value: s.openRouterEndpoint,
+                        hint: 'https://openrouter.ai/api/v1',
+                        onChanged: (v) { s.openRouterEndpoint = v; _save(); },
+                      ),
+                      _TextInputTile(
+                        label: 'OpenRouter API Key',
+                        subtitle: 'Stored securely in memory',
+                        value: s.openRouterApiKey,
+                        hint: 'sk-or-v1-...',
+                        obscure: true,
+                        onChanged: (v) { s.openRouterApiKey = v; _save(); },
+                      ),
+                      _TextInputTile(
+                        label: 'Model Name',
+                        subtitle: 'OpenRouter model ID (e.g. google/gemini-2.5-flash, openrouter/free)',
+                        value: s.openRouterModel,
+                        hint: 'google/gemini-2.5-flash',
+                        onChanged: (v) { s.openRouterModel = v; _save(); },
+                      ),
+                    ],
                     if (s.aiProvider == AiProvider.ollama) ...[
                       _TextInputTile(
                         label: 'Ollama Endpoint',
@@ -267,7 +284,24 @@ class _SettingsPanelState extends State<SettingsPanel> {
                       obscure: true,
                       onChanged: (v) { s.engineToken = v; _save(); },
                     ),
+                    _ReconnectEngineButton(workspaceState: widget.workspaceState),
                     _ConnectionStatusTile(workspaceState: widget.workspaceState),
+                  ],
+                ),
+
+                _buildSection(
+                  'GitHub',
+                  Icons.cloud_outlined,
+                  [
+                    _TextInputTile(
+                      label: 'Personal Access Token',
+                      subtitle: 'Used only for GitHub API requests and one-time repository setup',
+                      value: s.githubToken,
+                      hint: 'github_pat_...',
+                      obscure: true,
+                      onChanged: (v) { s.githubToken = v; _save(); },
+                    ),
+                    _GithubConnectionButton(workspaceState: widget.workspaceState),
                   ],
                 ),
 
@@ -319,14 +353,14 @@ class _SettingsPanelState extends State<SettingsPanel> {
             }
           }),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: const BoxDecoration(
               border: Border(bottom: BorderSide(color: Color(0xFF2D2D2D))),
             ),
             child: Row(
               children: [
                 Icon(icon, size: 15, color: const Color(0xFF9D9D9D)),
-                const SizedBox(width: 10),
+                const SizedBox(width: 8),
                 Text(
                   title.toUpperCase(),
                   style: const TextStyle(
@@ -353,7 +387,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
   }
 }
 
-// ── Tile building blocks ─────────────────────────────────────────────────────
+// ── Responsive Tile building blocks ──────────────────────────────────────────
 
 class _SwitchTile extends StatelessWidget {
   const _SwitchTile({
@@ -371,22 +405,30 @@ class _SwitchTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: Color(0xFF2D2D2D))),
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(label, style: const TextStyle(fontSize: 13, color: Color(0xFFCCCCCC))),
-                const SizedBox(height: 2),
-                Text(subtitle, style: const TextStyle(fontSize: 11, color: Color(0xFF666666))),
+                Text(label, style: const TextStyle(fontSize: 12.5, color: Color(0xFFCCCCCC))),
+                if (subtitle.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    subtitle,
+                    style: const TextStyle(fontSize: 11, color: Color(0xFF666666)),
+                    softWrap: true,
+                  ),
+                ],
               ],
             ),
           ),
+          const SizedBox(width: 8),
           Switch(
             value: value,
             onChanged: onChanged,
@@ -421,7 +463,7 @@ class _SliderTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.only(left: 20, right: 12, top: 10, bottom: 4),
+      padding: const EdgeInsets.only(left: 14, right: 10, top: 10, bottom: 4),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: Color(0xFF2D2D2D))),
       ),
@@ -430,15 +472,24 @@ class _SliderTile extends StatelessWidget {
         children: [
           Row(
             children: [
-              Text(label, style: const TextStyle(fontSize: 13, color: Color(0xFFCCCCCC))),
-              const Spacer(),
+              Expanded(
+                child: Text(
+                  label,
+                  style: const TextStyle(fontSize: 12.5, color: Color(0xFFCCCCCC)),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: const Color(0xFF3C3C3C),
                   borderRadius: BorderRadius.circular(4),
                 ),
-                child: Text(display, style: const TextStyle(fontSize: 11, color: Color(0xFF9D9D9D), fontFamily: 'Consolas')),
+                child: Text(
+                  display,
+                  style: const TextStyle(fontSize: 11, color: Color(0xFF9D9D9D), fontFamily: 'Consolas'),
+                ),
               ),
             ],
           ),
@@ -485,30 +536,40 @@ class _StepperTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: Color(0xFF2D2D2D))),
       ),
       child: Row(
         children: [
-          Expanded(child: Text(label, style: const TextStyle(fontSize: 13, color: Color(0xFFCCCCCC)))),
+          Expanded(
+            child: Text(
+              label,
+              style: const TextStyle(fontSize: 12.5, color: Color(0xFFCCCCCC)),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
           _SmallIconButton(
             icon: Icons.remove_rounded,
             tooltip: 'Decrease',
             onTap: value > min ? () => onChanged(value - step) : null,
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 4),
           Container(
             width: 44,
             alignment: Alignment.center,
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
             decoration: BoxDecoration(
               color: const Color(0xFF3C3C3C),
               borderRadius: BorderRadius.circular(4),
             ),
-            child: Text('$value', style: const TextStyle(fontSize: 13, color: Colors.white, fontFamily: 'Consolas')),
+            child: Text(
+              '$value',
+              style: const TextStyle(fontSize: 12, color: Colors.white, fontFamily: 'Consolas'),
+            ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 4),
           _SmallIconButton(
             icon: Icons.add_rounded,
             tooltip: 'Increase',
@@ -536,28 +597,66 @@ class _DropdownTile<T> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: Color(0xFF2D2D2D))),
       ),
-      child: Row(
-        children: [
-          Expanded(child: Text(label, style: const TextStyle(fontSize: 13, color: Color(0xFFCCCCCC)))),
-          DropdownButtonHideUnderline(
-            child: DropdownButton<T>(
-              value: value,
-              items: items.map((item) => DropdownMenuItem<T>(
-                value: item,
-                child: Text('$item', style: const TextStyle(fontSize: 12, color: Color(0xFFCCCCCC))),
-              )).toList(),
-              onChanged: onChanged,
-              style: const TextStyle(fontSize: 12, color: Color(0xFFCCCCCC)),
-              dropdownColor: const Color(0xFF3C3C3C),
-              borderRadius: BorderRadius.circular(6),
-              isDense: true,
-            ),
-          ),
-        ],
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final isNarrow = constraints.maxWidth < 280;
+
+          if (isNarrow) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: const TextStyle(fontSize: 12.5, color: Color(0xFFCCCCCC))),
+                const SizedBox(height: 6),
+                DropdownButtonHideUnderline(
+                  child: DropdownButton<T>(
+                    value: value,
+                    isExpanded: true,
+                    items: items.map((item) => DropdownMenuItem<T>(
+                      value: item,
+                      child: Text('$item', style: const TextStyle(fontSize: 12, color: Color(0xFFCCCCCC))),
+                    )).toList(),
+                    onChanged: onChanged,
+                    style: const TextStyle(fontSize: 12, color: Color(0xFFCCCCCC)),
+                    dropdownColor: const Color(0xFF3C3C3C),
+                    borderRadius: BorderRadius.circular(6),
+                    isDense: true,
+                  ),
+                ),
+              ],
+            );
+          }
+
+          return Row(
+            children: [
+              Expanded(
+                child: Text(
+                  label,
+                  style: const TextStyle(fontSize: 12.5, color: Color(0xFFCCCCCC)),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 8),
+              DropdownButtonHideUnderline(
+                child: DropdownButton<T>(
+                  value: value,
+                  items: items.map((item) => DropdownMenuItem<T>(
+                    value: item,
+                    child: Text('$item', style: const TextStyle(fontSize: 12, color: Color(0xFFCCCCCC))),
+                  )).toList(),
+                  onChanged: onChanged,
+                  style: const TextStyle(fontSize: 12, color: Color(0xFFCCCCCC)),
+                  dropdownColor: const Color(0xFF3C3C3C),
+                  borderRadius: BorderRadius.circular(6),
+                  isDense: true,
+                ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -604,26 +703,32 @@ class _TextInputTileState extends State<_TextInputTile> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: Color(0xFF2D2D2D))),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(widget.label, style: const TextStyle(fontSize: 13, color: Color(0xFFCCCCCC))),
-          const SizedBox(height: 2),
-          Text(widget.subtitle, style: const TextStyle(fontSize: 11, color: Color(0xFF666666))),
+          Text(widget.label, style: const TextStyle(fontSize: 12.5, color: Color(0xFFCCCCCC))),
+          if (widget.subtitle.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              widget.subtitle,
+              style: const TextStyle(fontSize: 11, color: Color(0xFF666666)),
+              softWrap: true,
+            ),
+          ],
           const SizedBox(height: 8),
           TextField(
             controller: _ctrl,
             obscureText: widget.obscure,
             maxLines: widget.multiline ? 4 : 1,
             minLines: 1,
-            style: const TextStyle(fontSize: 12.5, color: Colors.white, fontFamily: 'Consolas'),
+            style: const TextStyle(fontSize: 12, color: Colors.white, fontFamily: 'Consolas'),
             decoration: InputDecoration(
               hintText: widget.hint,
-              hintStyle: const TextStyle(color: Color(0xFF555555), fontSize: 12),
+              hintStyle: const TextStyle(color: Color(0xFF555555), fontSize: 11.5),
               filled: true,
               fillColor: const Color(0xFF2D2D2D),
               border: OutlineInputBorder(
@@ -660,15 +765,15 @@ class _ProviderSelectorTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: Color(0xFF2D2D2D))),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('AI Provider', style: TextStyle(fontSize: 13, color: Color(0xFFCCCCCC))),
-          const SizedBox(height: 10),
+          const Text('AI Provider', style: TextStyle(fontSize: 12.5, color: Color(0xFFCCCCCC))),
+          const SizedBox(height: 8),
           for (final provider in AiProvider.values)
             _ProviderOption(
               provider: provider,
@@ -693,6 +798,7 @@ class _ProviderOption extends StatelessWidget {
   final VoidCallback onTap;
 
   static const _providerIcons = {
+    AiProvider.openRouter: Icons.bolt_outlined,
     AiProvider.builtIn: Icons.offline_bolt_outlined,
     AiProvider.ollama: Icons.computer_outlined,
     AiProvider.openAi: Icons.cloud_outlined,
@@ -700,6 +806,7 @@ class _ProviderOption extends StatelessWidget {
   };
 
   static const _providerColors = {
+    AiProvider.openRouter: Color(0xFFFF9800),
     AiProvider.builtIn: Color(0xFF4EC9B0),
     AiProvider.ollama: Color(0xFFDCDCAA),
     AiProvider.openAi: Color(0xFF4FC3F7),
@@ -713,7 +820,7 @@ class _ProviderOption extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(6),
       child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
+        margin: const EdgeInsets.only(bottom: 6),
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
           color: isSelected ? const Color(0xFF04395E) : const Color(0xFF2D2D2D),
@@ -724,8 +831,8 @@ class _ProviderOption extends StatelessWidget {
         ),
         child: Row(
           children: [
-            Icon(_providerIcons[provider], size: 18, color: isSelected ? color : const Color(0xFF666666)),
-            const SizedBox(width: 12),
+            Icon(_providerIcons[provider], size: 17, color: isSelected ? color : const Color(0xFF666666)),
+            const SizedBox(width: 10),
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -733,7 +840,7 @@ class _ProviderOption extends StatelessWidget {
                   Text(
                     provider.label,
                     style: TextStyle(
-                      fontSize: 13,
+                      fontSize: 12.5,
                       fontWeight: FontWeight.w600,
                       color: isSelected ? Colors.white : const Color(0xFF9D9D9D),
                     ),
@@ -741,13 +848,14 @@ class _ProviderOption extends StatelessWidget {
                   const SizedBox(height: 2),
                   Text(
                     provider.description,
-                    style: const TextStyle(fontSize: 11, color: Color(0xFF666666)),
+                    style: const TextStyle(fontSize: 10.5, color: Color(0xFF666666)),
+                    softWrap: true,
                   ),
                 ],
               ),
             ),
             if (isSelected)
-              const Icon(Icons.check_circle_rounded, size: 16, color: Color(0xFF007ACC)),
+              const Icon(Icons.check_circle_rounded, size: 15, color: Color(0xFF007ACC)),
           ],
         ),
       ),
@@ -757,6 +865,73 @@ class _ProviderOption extends StatelessWidget {
 
 // ── Status tiles ─────────────────────────────────────────────────────────────
 
+class _ReconnectEngineButton extends StatelessWidget {
+  const _ReconnectEngineButton({required this.workspaceState});
+
+  final WorkspaceState workspaceState;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: Color(0xFF2D2D2D))),
+      ),
+      child: ElevatedButton.icon(
+        onPressed: workspaceState.reconnectEngine,
+        icon: const Icon(Icons.refresh_rounded, size: 14),
+        label: const Text('Reconnect Engine', style: TextStyle(fontSize: 12)),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFF007ACC),
+          foregroundColor: Colors.white,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+        ),
+      ),
+    );
+  }
+}
+
+class _GithubConnectionButton extends StatelessWidget {
+  const _GithubConnectionButton({required this.workspaceState});
+
+  final WorkspaceState workspaceState;
+
+  @override
+  Widget build(BuildContext context) {
+    final user = workspaceState.engine.githubUser;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: Color(0xFF2D2D2D))),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ElevatedButton.icon(
+            onPressed: () => workspaceState.engine.testGithubToken(workspaceState.settings.githubToken),
+            icon: const Icon(Icons.verified_user_outlined, size: 14),
+            label: const Text('Verify GitHub Token', style: TextStyle(fontSize: 12)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF24292F),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+          ),
+          if (user != null) ...[
+            const SizedBox(height: 6),
+            Text('Connected as @${user['login']}', style: const TextStyle(fontSize: 11, color: Color(0xFF4EC9B0))),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
 class _ConnectionStatusTile extends StatelessWidget {
   const _ConnectionStatusTile({required this.workspaceState});
   final WorkspaceState workspaceState;
@@ -765,7 +940,7 @@ class _ConnectionStatusTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final connected = workspaceState.engine.isConnected;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: Color(0xFF2D2D2D))),
       ),
@@ -779,15 +954,16 @@ class _ConnectionStatusTile extends StatelessWidget {
               color: connected ? const Color(0xFF4CAF50) : const Color(0xFFF44336),
             ),
           ),
-          const SizedBox(width: 10),
-          Text(
-            connected ? 'Engine connected' : 'Engine disconnected',
-            style: TextStyle(
-              fontSize: 12,
-              color: connected ? const Color(0xFF4CAF50) : const Color(0xFFF44336),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              connected ? 'Engine connected' : 'Engine disconnected',
+              style: TextStyle(
+                fontSize: 12,
+                color: connected ? const Color(0xFF4CAF50) : const Color(0xFFF44336),
+              ),
             ),
           ),
-          const Spacer(),
           if (connected)
             Text(
               workspaceState.engine.projectName,
@@ -813,18 +989,36 @@ class _TestConnectionButtonState extends State<_TestConnectionButton> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: const BoxDecoration(
         border: Border(bottom: BorderSide(color: Color(0xFF2D2D2D))),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           ElevatedButton.icon(
             onPressed: () {
               setState(() => _status = 'Sending test prompt...');
-              widget.workspaceState.engine.sendAiPrompt('Ping! Confirm agent is alive and responding.');
+              widget.workspaceState.engine.sendAiPrompt(
+                'Ping! Confirm agent is alive and responding.',
+                settingsPayload: {
+                  'aiProvider': widget.workspaceState.settings.aiProvider.name,
+                  'openRouterEndpoint': widget.workspaceState.settings.openRouterEndpoint,
+                  'openRouterApiKey': widget.workspaceState.settings.openRouterApiKey,
+                  'openRouterModel': widget.workspaceState.settings.openRouterModel,
+                  'ollamaEndpoint': widget.workspaceState.settings.ollamaEndpoint,
+                  'ollamaModel': widget.workspaceState.settings.ollamaModel,
+                  'openAiEndpoint': widget.workspaceState.settings.openAiEndpoint,
+                  'openAiApiKey': widget.workspaceState.settings.openAiApiKey,
+                  'openAiModel': widget.workspaceState.settings.openAiModel,
+                  'customAgentEndpoint': widget.workspaceState.settings.customAgentEndpoint,
+                  'aiSystemPrompt': widget.workspaceState.settings.aiSystemPrompt,
+                  'aiTemperature': widget.workspaceState.settings.aiTemperature,
+                  'aiMaxTokens': widget.workspaceState.settings.aiMaxTokens,
+                },
+              );
               Future.delayed(const Duration(seconds: 2), () {
-                if (mounted) setState(() => _status = 'Test sent — check AI panel for response.');
+                if (mounted) setState(() => _status = 'Test sent — open AI Panel to check response.');
               });
             },
             icon: const Icon(Icons.science_outlined, size: 14),
@@ -832,15 +1026,15 @@ class _TestConnectionButtonState extends State<_TestConnectionButton> {
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF007ACC),
               foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               minimumSize: Size.zero,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
             ),
           ),
           if (_status.isNotEmpty) ...[
-            const SizedBox(width: 12),
-            Expanded(child: Text(_status, style: const TextStyle(fontSize: 11, color: Color(0xFF9D9D9D)))),
+            const SizedBox(height: 6),
+            Text(_status, style: const TextStyle(fontSize: 11, color: Color(0xFF9D9D9D))),
           ],
         ],
       ),

@@ -73,6 +73,24 @@ class _GitPanelState extends State<GitPanel> {
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(),
                 ),
+                const SizedBox(width: 10),
+                IconButton(
+                  icon: const Icon(Icons.download_rounded, size: 16, color: Color(0xFF8E8E8E)),
+                  onPressed: () => widget.workspaceState.engine.pullGithub(branch),
+                  tooltip: 'Pull from GitHub',
+                  splashRadius: 16,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+                const SizedBox(width: 10),
+                IconButton(
+                  icon: const Icon(Icons.upload_rounded, size: 16, color: Color(0xFF8E8E8E)),
+                  onPressed: () => widget.workspaceState.engine.pushGithub(branch),
+                  tooltip: 'Push to GitHub',
+                  splashRadius: 16,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
               ],
             ),
           ),
@@ -124,6 +142,18 @@ class _GitPanelState extends State<GitPanel> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF007ACC),
                     foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: () => _createGithubRepository(context),
+                  icon: const Icon(Icons.cloud_upload_outlined, size: 14),
+                  label: const Text('Publish to GitHub', style: TextStyle(fontSize: 12)),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFFCCCCCC),
+                    side: const BorderSide(color: Color(0xFF3C3C3C)),
                     padding: const EdgeInsets.symmetric(vertical: 8),
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
                   ),
@@ -189,6 +219,42 @@ class _GitPanelState extends State<GitPanel> {
           ),
         ],
       ),
+    );
+  }
+
+  Future<void> _createGithubRepository(BuildContext context) async {
+    final controller = TextEditingController(text: widget.workspaceState.projectName);
+    final repositoryName = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF252526),
+        title: const Text('Publish to GitHub', style: TextStyle(color: Colors.white, fontSize: 16)),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+            labelText: 'Repository name',
+            labelStyle: TextStyle(color: Color(0xFF9D9D9D)),
+          ),
+          onSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(dialogContext, controller.text.trim()),
+            child: const Text('Create private repository'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (repositoryName == null || repositoryName.isEmpty) return;
+
+    widget.workspaceState.engine.createGithubRepository(
+      name: repositoryName,
+      isPrivate: true,
+      token: widget.workspaceState.settings.githubToken,
     );
   }
 }

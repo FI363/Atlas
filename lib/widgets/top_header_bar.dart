@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../state/workspace_state.dart';
 
-/// Clean top bar containing workspace title, run button, command palette trigger, and panel toggles.
+/// VS Code-style top bar with text menus, workspace title, and panel controls.
 class TopHeaderBar extends StatelessWidget {
   const TopHeaderBar({super.key, required this.workspaceState});
 
@@ -21,6 +21,54 @@ class TopHeaderBar extends StatelessWidget {
           const SizedBox(width: 14),
           const Icon(Icons.code_rounded, size: 17, color: Color(0xFF3794FF)),
           const SizedBox(width: 10),
+          _HeaderMenu(
+            label: 'File',
+            items: const ['Open Folder', 'Save', 'Save All', 'Refresh Workspace'],
+            onSelected: (item) {
+              if (item == 'Open Folder') workspaceState.engine.openFolder();
+              if (item == 'Save') workspaceState.saveCurrentFile();
+              if (item == 'Save All') workspaceState.saveAllFiles();
+              if (item == 'Refresh Workspace') workspaceState.refreshWorkspace();
+            },
+          ),
+          _HeaderMenu(
+            label: 'View',
+            items: const ['Explorer', 'Terminal', 'Atlas AI', 'Command Palette'],
+            onSelected: (item) {
+              if (item == 'Explorer') workspaceState.toggleExplorer();
+              if (item == 'Terminal') workspaceState.toggleTerminal();
+              if (item == 'Atlas AI') workspaceState.toggleAiPanel();
+              if (item == 'Command Palette') workspaceState.toggleCommandPalette();
+            },
+          ),
+          _HeaderMenu(
+            label: 'Run',
+            items: const ['Run Project', 'Stop Running Process'],
+            onSelected: (item) {
+              if (item == 'Run Project') workspaceState.runProject();
+              if (item == 'Stop Running Process') workspaceState.engine.killProcess();
+            },
+          ),
+          _HeaderMenu(
+            label: 'Terminal',
+            items: const ['Show Terminal', 'Clear Terminal', 'Reconnect Engine'],
+            onSelected: (item) {
+              if (item == 'Show Terminal' && !workspaceState.isTerminalVisible) {
+                workspaceState.toggleTerminal();
+              }
+              if (item == 'Clear Terminal') workspaceState.engine.clearTerminal();
+              if (item == 'Reconnect Engine') workspaceState.reconnectEngine();
+            },
+          ),
+          _HeaderMenu(
+            label: 'Tools',
+            items: const ['Settings', 'Reconnect Engine'],
+            onSelected: (item) {
+              if (item == 'Settings') workspaceState.openSettings();
+              if (item == 'Reconnect Engine') workspaceState.reconnectEngine();
+            },
+          ),
+          const SizedBox(width: 6),
           Text(
             'Atlas / ${workspaceState.projectName}',
             style: const TextStyle(
@@ -28,6 +76,12 @@ class TopHeaderBar extends StatelessWidget {
               fontWeight: FontWeight.w500,
               color: Color(0xFFCCCCCC),
             ),
+          ),
+          const SizedBox(width: 4),
+          _HeaderIconButton(
+            icon: Icons.folder_open_outlined,
+            tooltip: 'Open Folder',
+            onTap: workspaceState.engine.openFolder,
           ),
           const Spacer(),
 
@@ -66,6 +120,36 @@ class TopHeaderBar extends StatelessWidget {
           ),
           const SizedBox(width: 12),
         ],
+      ),
+    );
+  }
+}
+
+class _HeaderMenu extends StatelessWidget {
+  const _HeaderMenu({required this.label, required this.items, required this.onSelected});
+
+  final String label;
+  final List<String> items;
+  final ValueChanged<String> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      tooltip: label,
+      onSelected: onSelected,
+      padding: EdgeInsets.zero,
+      offset: const Offset(0, 30),
+      color: const Color(0xFF252526),
+      itemBuilder: (_) => items
+          .map((item) => PopupMenuItem<String>(
+                value: item,
+                height: 30,
+                child: Text(item, style: const TextStyle(fontSize: 12, color: Color(0xFFD4D4D4))),
+              ))
+          .toList(),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        child: Text(label, style: const TextStyle(fontSize: 12, color: Color(0xFFCCCCCC))),
       ),
     );
   }

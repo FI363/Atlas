@@ -142,7 +142,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                     Positioned(
                                       top: 0,
                                       right: 0,
-                                      bottom: 0,
+                                      // Keep the terminal viewport unobstructed on
+                                      // tablet/mobile layouts when the AI panel is
+                                      // rendered as an overlay.
+                                      bottom: showTerminal ? _workspaceState.terminalHeight + 4 : 0,
                                       width: overlayAiWidth,
                                       child: Material(
                                         elevation: 12,

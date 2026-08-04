@@ -35,11 +35,13 @@ class WorkspaceState extends ChangeNotifier {
   bool _hasRequestedTree = false;
 
   WorkspaceState() {
-    engine.connect(
-      url: AtlasConfig.engineUrl,
-      token: AtlasConfig.engineToken,
-    );
+    settings.engineUrl = AtlasConfig.engineUrl;
+    settings.engineToken = AtlasConfig.engineToken;
     engine.addListener(_onEngineUpdate);
+    engine.connect(
+      url: settings.engineUrl,
+      token: settings.engineToken,
+    );
   }
 
   @override
@@ -132,7 +134,12 @@ class WorkspaceState extends ChangeNotifier {
 
   /// Call after mutating fields on [settings] to propagate changes.
   void applySettings() {
+    engine.sendSettings(settings.toMap());
     notifyListeners();
+  }
+
+  void reconnectEngine() {
+    engine.connect(url: settings.engineUrl, token: settings.engineToken);
   }
 
   void setActiveActivity(String activity) {
@@ -225,9 +232,15 @@ class WorkspaceState extends ChangeNotifier {
   void createFile(String path) => engine.createFile(path);
   void createDirectory(String path) => engine.createDirectory(path);
 
+  /// Re-read the persisted workspace tree after an external file-system change.
+  void refreshWorkspace() => engine.requestFileTree();
+
   // ── Engine listener ────────────────────────────────────────────────────
 
   void _onEngineUpdate() {
+    final persistedSettings = engine.takePendingSettings();
+    if (persistedSettings != null) settings.applyMap(persistedSettings);
+
     if (engine.isConnected && !_hasRequestedTree) {
       _hasRequestedTree = true;
       engine.requestFileTree();
@@ -235,6 +248,13 @@ class WorkspaceState extends ChangeNotifier {
 
     final saved = engine.takeLastSavedFilePath();
     if (saved != null) _drafts.remove(saved);
+
+    if (engine.takeWorkspaceOpened()) {
+      _openFiles.clear();
+      _drafts.clear();
+      _activeFile = null;
+      _hasRequestedTree = true;
+    }
 
     if (engine.takeWorkspaceChanged()) engine.requestFileTree();
 

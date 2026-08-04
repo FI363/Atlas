@@ -25,6 +25,14 @@ class _FileExplorerState extends State<FileExplorer> {
       title: 'EXPLORER',
       actions: [
         IconButton(
+          onPressed: widget.workspaceState.engine.openFolder,
+          icon: const Icon(Icons.folder_open_outlined, size: 17),
+          tooltip: 'Open Folder',
+          splashRadius: 16,
+          padding: EdgeInsets.zero,
+          constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+        ),
+        IconButton(
           onPressed: () => _createEntry(context, isDirectory: false),
           icon: const Icon(Icons.note_add_outlined, size: 17),
           tooltip: 'New File',
