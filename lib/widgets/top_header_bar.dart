@@ -81,7 +81,7 @@ class TopHeaderBar extends StatelessWidget {
           _HeaderIconButton(
             icon: Icons.folder_open_outlined,
             tooltip: 'Open Folder',
-            onTap: workspaceState.engine.openFolder,
+            onTap: () => workspaceState.engine.openFolder(),
           ),
           const Spacer(),
 
