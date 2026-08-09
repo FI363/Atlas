@@ -25,7 +25,7 @@ class _FileExplorerState extends State<FileExplorer> {
       title: 'EXPLORER',
       actions: [
         IconButton(
-          onPressed: widget.workspaceState.engine.openFolder,
+          onPressed: () => widget.workspaceState.engine.openFolder(),
           icon: const Icon(Icons.folder_open_outlined, size: 17),
           tooltip: 'Open Folder',
           splashRadius: 16,
