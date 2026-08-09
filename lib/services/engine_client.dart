@@ -275,7 +275,6 @@ class EngineClient extends ChangeNotifier {
 
   void createFile(String path) => _createEntry('create_file', path);
   void createDirectory(String path) => _createEntry('create_directory', path);
-  void openFolder([String? path]) => _send({'type': 'open_folder', if (path != null) 'path': path});
 
   void pickAttachments() {
     if (_isConnected) _send({'type': 'pick_attachments'});

@@ -20,6 +20,7 @@ class AtlasSettings {
   // ── AI Agent ──────────────────────────────────────────────────────────────
   AiProvider aiProvider = AiProvider.openRouter;
   String openRouterEndpoint = 'https://openrouter.ai/api/v1';
+  String openRouterApiKey = '';
   String openRouterModel = 'google/gemini-2.5-flash';
   String ollamaEndpoint = 'http://localhost:11434';
   String ollamaModel = 'qwen3:4b';

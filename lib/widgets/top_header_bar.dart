@@ -23,9 +23,8 @@ class TopHeaderBar extends StatelessWidget {
           const SizedBox(width: 10),
           _HeaderMenu(
             label: 'File',
-            items: const ['Open Folder', 'Save', 'Save All', 'Refresh Workspace'],
+            items: const ['Save', 'Save All', 'Refresh Workspace'],
             onSelected: (item) {
-              if (item == 'Open Folder') workspaceState.engine.openFolder();
               if (item == 'Save') workspaceState.saveCurrentFile();
               if (item == 'Save All') workspaceState.saveAllFiles();
               if (item == 'Refresh Workspace') workspaceState.refreshWorkspace();
@@ -69,20 +68,6 @@ class TopHeaderBar extends StatelessWidget {
             },
           ),
           const SizedBox(width: 6),
-          Text(
-            'Atlas / ${workspaceState.projectName}',
-            style: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-              color: Color(0xFFCCCCCC),
-            ),
-          ),
-          const SizedBox(width: 4),
-          _HeaderIconButton(
-            icon: Icons.folder_open_outlined,
-            tooltip: 'Open Folder',
-            onTap: workspaceState.engine.openFolder,
-          ),
           const Spacer(),
 
           // Command Palette button (Ctrl+Shift+P)
