@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../state/workspace_state.dart';
 import '../widgets/activity_sidebar.dart';
-import '../widgets/ai_panel.dart';
+import '../widgets/ai_panels.dart';
 import '../widgets/editor_panel.dart';
 import '../widgets/file_explorer.dart';
 import '../widgets/terminal_panel.dart';
