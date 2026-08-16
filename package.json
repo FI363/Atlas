@@ -6,6 +6,10 @@
     "engine": "node backend/server.js",
     "dev": "node scripts/start-atlas.js dev",
     "ipad": "node scripts/start-atlas.js ipad",
+    "companion": "node scripts/start-companion.js",
     "test:engine": "node backend/test/security.test.js && node backend/test/atlas_agent.test.js && node backend/test/conversation_session.test.js"
+  },
+  "devDependencies": {
+    "untun": "^0.2.2"
   }
 }

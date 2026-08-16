@@ -224,6 +224,7 @@ class _HorizontalSplitter extends StatefulWidget {
 
 class _HorizontalSplitterState extends State<_HorizontalSplitter> {
   bool _isHovered = false;
+  bool _isDragging = false;
 
   @override
   Widget build(BuildContext context) {
@@ -232,10 +233,22 @@ class _HorizontalSplitterState extends State<_HorizontalSplitter> {
       onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),
       child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragStart: (_) => setState(() => _isDragging = true),
         onHorizontalDragUpdate: (details) => widget.onDrag(details.delta.dx),
+        onHorizontalDragEnd: (_) => setState(() => _isDragging = false),
+        onHorizontalDragCancel: () => setState(() => _isDragging = false),
         child: Container(
-          width: 4,
-          color: _isHovered ? const Color(0xFF007ACC) : Colors.transparent,
+          width: 14,
+          color: Colors.transparent,
+          alignment: Alignment.center,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            width: (_isHovered || _isDragging) ? 3 : 1,
+            color: (_isHovered || _isDragging)
+                ? const Color(0xFF007ACC)
+                : const Color(0xFF2D2D2D),
+          ),
         ),
       ),
     );
@@ -252,6 +265,7 @@ class _VerticalSplitter extends StatefulWidget {
 
 class _VerticalSplitterState extends State<_VerticalSplitter> {
   bool _isHovered = false;
+  bool _isDragging = false;
 
   @override
   Widget build(BuildContext context) {
@@ -260,10 +274,22 @@ class _VerticalSplitterState extends State<_VerticalSplitter> {
       onEnter: (_) => setState(() => _isHovered = true),
       onExit: (_) => setState(() => _isHovered = false),
       child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onVerticalDragStart: (_) => setState(() => _isDragging = true),
         onVerticalDragUpdate: (details) => widget.onDrag(details.delta.dy),
+        onVerticalDragEnd: (_) => setState(() => _isDragging = false),
+        onVerticalDragCancel: () => setState(() => _isDragging = false),
         child: Container(
-          height: 4,
-          color: _isHovered ? const Color(0xFF007ACC) : Colors.transparent,
+          height: 14,
+          color: Colors.transparent,
+          alignment: Alignment.center,
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            height: (_isHovered || _isDragging) ? 3 : 1,
+            color: (_isHovered || _isDragging)
+                ? const Color(0xFF007ACC)
+                : const Color(0xFF2D2D2D),
+          ),
         ),
       ),
     );

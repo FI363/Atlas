@@ -20,12 +20,19 @@ class _FileExplorerState extends State<FileExplorer> {
   @override
   Widget build(BuildContext context) {
     final tree = widget.workspaceState.engine.fileTree;
+    final projectName = widget.workspaceState.projectName.trim();
+    final explorerTitle = projectName.isNotEmpty
+        ? '📁 ${projectName.toUpperCase()}'
+        : 'NO FOLDER OPEN';
 
     return _PanelFrame(
-      title: 'EXPLORER',
+      title: explorerTitle,
+      tooltip: widget.workspaceState.engine.cwd.isNotEmpty
+          ? widget.workspaceState.engine.cwd
+          : 'Workspace Explorer',
       actions: [
         IconButton(
-          onPressed: () => widget.workspaceState.engine.openFolder(),
+          onPressed: () => _handleOpenFolder(context),
           icon: const Icon(Icons.folder_open_outlined, size: 17),
           tooltip: 'Open Folder',
           splashRadius: 16,
@@ -212,20 +219,21 @@ class _FileExplorerState extends State<FileExplorer> {
             ),
             child: Row(
               children: [
-                Icon(
-                  isDir
-                      ? (isExpanded ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_right)
-                      : Icons.insert_drive_file_outlined,
-                  size: 15,
-                  color: isDir ? const Color(0xFFCCCCCC) : const Color(0xFF8E8E8E),
-                ),
+                if (isDir)
+                  Icon(
+                    isExpanded ? Icons.keyboard_arrow_down : Icons.keyboard_arrow_right,
+                    size: 15,
+                    color: const Color(0xFFCCCCCC),
+                  )
+                else
+                  const SizedBox(width: 15),
                 const SizedBox(width: 4),
                 Icon(
                   isDir
                       ? (isExpanded ? Icons.folder_open_rounded : Icons.folder_rounded)
                       : _fileIcon(name),
                   size: 16,
-                  color: isDir ? const Color(0xFFE8A838) : _fileColor(name), // VS Code folder yellow
+                  color: isDir ? const Color(0xFFE8A838) : _fileColor(name),
                 ),
                 const SizedBox(width: 6),
                 Expanded(
@@ -270,16 +278,115 @@ class _FileExplorerState extends State<FileExplorer> {
     if (name.endsWith('.js')) return const Color(0xFFF7DF1E);
     return const Color(0xFF8E8E8E);
   }
+  Future<void> _handleOpenFolder(BuildContext context) async {
+    // If connected to remote engine, offer quick choice: Native Server Dialog or Enter Path directly
+    final currentCwd = widget.workspaceState.engine.cwd;
+    final pathController = TextEditingController(text: currentCwd);
+
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xFF252526),
+        title: const Row(
+          children: [
+            Icon(Icons.folder_open_rounded, size: 20, color: Color(0xFF3794FF)),
+            SizedBox(width: 8),
+            Text('Open Folder in Workspace', style: TextStyle(fontSize: 14, color: Colors.white, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: SizedBox(
+          width: 440,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Enter an absolute folder path on your workspace or browse via companion server:',
+                style: TextStyle(fontSize: 12, color: Color(0xFFCCCCCC)),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: pathController,
+                style: const TextStyle(fontSize: 13, color: Colors.white, fontFamily: 'Consolas'),
+                decoration: InputDecoration(
+                  hintText: 'e.g. C:\\Users\\... or /Users/...',
+                  hintStyle: const TextStyle(color: Color(0xFF666666), fontSize: 12),
+                  filled: true,
+                  fillColor: const Color(0xFF3C3C3C),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(4),
+                    borderSide: BorderSide.none,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+                  isDense: true,
+                ),
+                onSubmitted: (val) {
+                  if (val.trim().isNotEmpty) {
+                    Navigator.pop(dialogContext, val.trim());
+                  }
+                },
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                children: [
+                  OutlinedButton.icon(
+                    onPressed: () {
+                      Navigator.pop(dialogContext, '__NATIVE_PICKER__');
+                    },
+                    icon: const Icon(Icons.desktop_windows_outlined, size: 14),
+                    label: const Text('Browse Server Window', style: TextStyle(fontSize: 11)),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: const Color(0xFF3794FF),
+                      side: const BorderSide(color: Color(0xFF3794FF)),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel', style: TextStyle(color: Color(0xFF8E8E8E))),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final path = pathController.text.trim();
+              if (path.isNotEmpty) {
+                Navigator.pop(dialogContext, path);
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: const Color(0xFF007ACC),
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Open Path'),
+          ),
+        ],
+      ),
+    );
+
+    if (selected == '__NATIVE_PICKER__') {
+      widget.workspaceState.engine.openFolder();
+    } else if (selected != null && selected.isNotEmpty) {
+      widget.workspaceState.engine.openFolder(selected);
+    }
+  }
 }
 
 class _PanelFrame extends StatelessWidget {
   const _PanelFrame({
     required this.title,
     required this.child,
+    this.tooltip,
     this.actions = const [],
   });
 
   final String title;
+  final String? tooltip;
   final Widget child;
   final List<Widget> actions;
 
@@ -299,14 +406,19 @@ class _PanelFrame extends StatelessWidget {
               child: Row(
                 children: [
                   Expanded(
-                    child: Text(
-                      title,
-                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        fontSize: 11,
-                        letterSpacing: 0.8,
-                        fontWeight: FontWeight.w600,
+                    child: Tooltip(
+                      message: tooltip ?? title,
+                      waitDuration: const Duration(milliseconds: 500),
+                      child: Text(
+                        title,
+                        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                          fontSize: 11,
+                          letterSpacing: 0.8,
+                          fontWeight: FontWeight.w600,
+                          color: const Color(0xFFE0E0E0),
+                        ),
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
                   ...actions,

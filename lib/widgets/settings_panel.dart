@@ -227,6 +227,95 @@ class _SettingsPanelState extends State<SettingsPanel> {
                         onChanged: (v) { s.openAiModel = v; _save(); },
                       ),
                     ],
+                    if (s.aiProvider == AiProvider.anthropic) ...[
+                      _TextInputTile(
+                        label: 'Anthropic Endpoint',
+                        subtitle: 'Anthropic Messages API endpoint',
+                        value: s.anthropicEndpoint,
+                        hint: 'https://api.anthropic.com/v1',
+                        onChanged: (v) { s.anthropicEndpoint = v; _save(); },
+                      ),
+                      _TextInputTile(
+                        label: 'Anthropic API Key',
+                        subtitle: 'Stored securely in app memory',
+                        value: s.anthropicApiKey,
+                        hint: 'sk-ant-api03-...',
+                        obscure: true,
+                        onChanged: (v) { s.anthropicApiKey = v; _save(); },
+                      ),
+                      _TextInputTile(
+                        label: 'Model Name',
+                        subtitle: 'Claude model ID (e.g. claude-3-5-sonnet-20241022, claude-3-7-sonnet-latest)',
+                        value: s.anthropicModel,
+                        hint: 'claude-3-5-sonnet-20241022',
+                        onChanged: (v) { s.anthropicModel = v; _save(); },
+                      ),
+                    ],
+                    if (s.aiProvider == AiProvider.gemini) ...[
+                      _TextInputTile(
+                        label: 'Google Gemini API Key',
+                        subtitle: 'From Google AI Studio (aistudio.google.com)',
+                        value: s.geminiApiKey,
+                        hint: 'AIzaSy...',
+                        obscure: true,
+                        onChanged: (v) { s.geminiApiKey = v; _save(); },
+                      ),
+                      _TextInputTile(
+                        label: 'Gemini Model',
+                        subtitle: 'e.g. gemini-2.0-flash, gemini-2.0-pro-exp-02-05, gemini-1.5-pro',
+                        value: s.geminiModel,
+                        hint: 'gemini-2.0-flash',
+                        onChanged: (v) { s.geminiModel = v; _save(); },
+                      ),
+                    ],
+                    if (s.aiProvider == AiProvider.deepseek) ...[
+                      _TextInputTile(
+                        label: 'DeepSeek Endpoint',
+                        subtitle: 'DeepSeek OpenAI-compatible endpoint',
+                        value: s.deepseekEndpoint,
+                        hint: 'https://api.deepseek.com',
+                        onChanged: (v) { s.deepseekEndpoint = v; _save(); },
+                      ),
+                      _TextInputTile(
+                        label: 'DeepSeek API Key',
+                        subtitle: 'From platform.deepseek.com',
+                        value: s.deepseekApiKey,
+                        hint: 'sk-...',
+                        obscure: true,
+                        onChanged: (v) { s.deepseekApiKey = v; _save(); },
+                      ),
+                      _TextInputTile(
+                        label: 'Model Name',
+                        subtitle: 'deepseek-chat (V3) or deepseek-reasoner (R1)',
+                        value: s.deepseekModel,
+                        hint: 'deepseek-chat',
+                        onChanged: (v) { s.deepseekModel = v; _save(); },
+                      ),
+                    ],
+                    if (s.aiProvider == AiProvider.groq) ...[
+                      _TextInputTile(
+                        label: 'Groq Endpoint',
+                        subtitle: 'Groq OpenAI-compatible endpoint',
+                        value: s.groqEndpoint,
+                        hint: 'https://api.groq.com/openai/v1',
+                        onChanged: (v) { s.groqEndpoint = v; _save(); },
+                      ),
+                      _TextInputTile(
+                        label: 'Groq API Key',
+                        subtitle: 'From console.groq.com',
+                        value: s.groqApiKey,
+                        hint: 'gsk_...',
+                        obscure: true,
+                        onChanged: (v) { s.groqApiKey = v; _save(); },
+                      ),
+                      _TextInputTile(
+                        label: 'Model Name',
+                        subtitle: 'e.g. llama-3.3-70b-versatile, deepseek-r1-distill-llama-70b',
+                        value: s.groqModel,
+                        hint: 'llama-3.3-70b-versatile',
+                        onChanged: (v) { s.groqModel = v; _save(); },
+                      ),
+                    ],
                     if (s.aiProvider == AiProvider.custom)
                       _TextInputTile(
                         label: 'Custom Agent Endpoint',
@@ -799,23 +888,32 @@ class _ProviderOption extends StatelessWidget {
 
   static const _providerIcons = {
     AiProvider.openRouter: Icons.bolt_outlined,
-    AiProvider.builtIn: Icons.offline_bolt_outlined,
-    AiProvider.ollama: Icons.computer_outlined,
+    AiProvider.anthropic: Icons.psychology_outlined,
+    AiProvider.gemini: Icons.auto_awesome_outlined,
+    AiProvider.deepseek: Icons.explore_outlined,
+    AiProvider.groq: Icons.speed_outlined,
     AiProvider.openAi: Icons.cloud_outlined,
+    AiProvider.ollama: Icons.computer_outlined,
+    AiProvider.builtIn: Icons.offline_bolt_outlined,
     AiProvider.custom: Icons.webhook_outlined,
   };
 
   static const _providerColors = {
     AiProvider.openRouter: Color(0xFFFF9800),
-    AiProvider.builtIn: Color(0xFF4EC9B0),
-    AiProvider.ollama: Color(0xFFDCDCAA),
+    AiProvider.anthropic: Color(0xFFD97706),
+    AiProvider.gemini: Color(0xFF4285F4),
+    AiProvider.deepseek: Color(0xFF2E86DE),
+    AiProvider.groq: Color(0xFFF39C12),
     AiProvider.openAi: Color(0xFF4FC3F7),
+    AiProvider.ollama: Color(0xFFDCDCAA),
+    AiProvider.builtIn: Color(0xFF4EC9B0),
     AiProvider.custom: Color(0xFFC586C0),
   };
 
   @override
   Widget build(BuildContext context) {
-    final color = _providerColors[provider]!;
+    final color = _providerColors[provider] ?? const Color(0xFF007ACC);
+    final icon = _providerIcons[provider] ?? Icons.auto_awesome_outlined;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(6),
@@ -831,7 +929,7 @@ class _ProviderOption extends StatelessWidget {
         ),
         child: Row(
           children: [
-            Icon(_providerIcons[provider], size: 17, color: isSelected ? color : const Color(0xFF666666)),
+            Icon(icon, size: 17, color: isSelected ? color : const Color(0xFF666666)),
             const SizedBox(width: 10),
             Expanded(
               child: Column(

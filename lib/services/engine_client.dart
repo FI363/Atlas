@@ -38,6 +38,15 @@ class EngineClient extends ChangeNotifier {
   final List<String> _terminalOutput = [];
   bool _terminalReady = false;
 
+  // IDE Output stream (build, git, compiler, server logs)
+  final List<String> _outputLogs = [];
+
+  // Debug Console stream (agent steps, tool calls, websocket traces)
+  final List<String> _debugLogs = [];
+
+  // Problems / Diagnostics list
+  final List<Map<String, dynamic>> _problems = [];
+
   // AI Agent message history
   final List<Map<String, dynamic>> _aiMessages = [
     {
@@ -79,6 +88,9 @@ class EngineClient extends ChangeNotifier {
   String get projectName => _projectName;
   String get cwd => _cwd;
   List<String> get terminalOutput => List.unmodifiable(_terminalOutput);
+  List<String> get outputLogs => List.unmodifiable(_outputLogs);
+  List<String> get debugLogs => List.unmodifiable(_debugLogs);
+  List<Map<String, dynamic>> get problems => List.unmodifiable(_problems);
   List<Map<String, dynamic>> get aiMessages => List.unmodifiable(_aiMessages);
   bool get isAiThinking => _isAiThinking;
   List<Map<String, dynamic>> get searchResults =>
@@ -264,6 +276,21 @@ class EngineClient extends ChangeNotifier {
 
   void clearTerminal() {
     _terminalOutput.clear();
+    notifyListeners();
+  }
+
+  void clearOutput() {
+    _outputLogs.clear();
+    notifyListeners();
+  }
+
+  void clearDebug() {
+    _debugLogs.clear();
+    notifyListeners();
+  }
+
+  void clearProblems() {
+    _problems.clear();
     notifyListeners();
   }
 
@@ -477,29 +504,37 @@ class EngineClient extends ChangeNotifier {
               data['settings'] as Map,
             );
           }
-          _log('[SYSTEM] ${data['message']}\n');
+          _logOutput('[SYSTEM] ${data['message']}\n');
+          _logDebug('[Engine Connected] ${data['message']}\n');
           _send({'type': 'terminal_open'});
           return;
         case 'terminal_ready':
           _terminalReady = true;
           return;
         case 'terminal_data':
-          _log(data['content'] as String? ?? '');
+          _logTerminal(data['content'] as String? ?? '');
           return;
         case 'terminal_exit':
           _terminalReady = false;
-          _log('[Terminal exited with code ${data['exitCode']}]\n');
+          _logTerminal('[Process exited with code ${data['exitCode']}]\n');
+          _logOutput('[Terminal session finished: code ${data['exitCode']}]\n');
           return;
         case 'output':
-          _log(data['content'] as String);
+          _logOutput(data['content'] as String);
           return;
         case 'error':
-          _log('[ERROR] ${data['content']}');
+          _logOutput('[ERROR] ${data['content']}');
+          _logDebug('[ERROR] ${data['content']}');
+          _problems.add({
+            'type': 'error',
+            'message': data['content']?.toString() ?? 'Unknown error',
+            'time': DateTime.now().toIso8601String(),
+          });
           _isAiThinking = false;
           notifyListeners();
           return;
         case 'exit':
-          _log('[Process exited with code ${data['code']}]\n');
+          _logOutput('[Process exited with code ${data['code']}]\n');
           return;
         case 'ai_response':
           _isAiThinking = false;
@@ -513,22 +548,27 @@ class EngineClient extends ChangeNotifier {
         // ── Agent Messages ──────────────────────────────────────────────────
         case 'agent_progress':
           agentState.updateProgress(data['status'] as String? ?? '');
+          _logDebug('[Agent Step] ${data['status']}\n');
           notifyListeners();
           return;
         case 'agent_tool_call':
           agentState.addToolCall(Map<String, dynamic>.from(data as Map));
+          _logDebug('[Tool Call] ${data['toolName']} (${jsonEncode(data['args'])})\n');
           notifyListeners();
           return;
         case 'agent_tool_result':
           agentState.completeToolCall(Map<String, dynamic>.from(data as Map));
+          _logDebug('[Tool Result] ${data['toolName']}: ${jsonEncode(data['result'])}\n');
           notifyListeners();
           return;
         case 'agent_approval_request':
           agentState.requestApproval(Map<String, dynamic>.from(data as Map));
+          _logDebug('[Approval Request] ${data['toolName']}\n');
           notifyListeners();
           return;
         case 'agent_diff_proposal':
           agentState.proposeDiff(Map<String, dynamic>.from(data as Map));
+          _logDebug('[Diff Proposed] ${data['path']}\n');
           notifyListeners();
           return;
         case 'agent_response':
@@ -560,7 +600,7 @@ class EngineClient extends ChangeNotifier {
           _githubUser = data['user'] is Map<String, dynamic>
               ? data['user'] as Map<String, dynamic>
               : null;
-          if (data['error'] != null) _log('[GitHub] ${data['error']}\n');
+          if (data['error'] != null) _logOutput('[GitHub] ${data['error']}\n');
           notifyListeners();
           return;
         case 'file_tree':
@@ -574,11 +614,11 @@ class EngineClient extends ChangeNotifier {
         case 'file_saved':
           _fileContents[data['path'] as String] = data['content'] as String;
           _lastSavedFilePath = data['path'] as String;
-          _log('Saved ${data['path']}\n');
+          _logOutput('Saved ${data['path']}\n');
           return;
         case 'workspace_changed':
           _workspaceChanged = true;
-          _log('${data['message']}\n');
+          _logOutput('${data['message']}\n');
           return;
         case 'workspace_opened':
           _projectName = data['projectName'] as String? ?? _projectName;
@@ -586,7 +626,7 @@ class EngineClient extends ChangeNotifier {
           _fileTree = List<Map<String, dynamic>>.from(data['children'] ?? []);
           _fileContents.clear();
           _workspaceOpened = true;
-          _log('Opened workspace: $_cwd\n');
+          _logOutput('Opened workspace: $_cwd\n');
           return;
         case 'attachments_result':
           _pendingAttachments = List<Map<String, dynamic>>.from(
@@ -602,7 +642,7 @@ class EngineClient extends ChangeNotifier {
           return;
       }
     } catch (e) {
-      _log('$rawData\n');
+      _logOutput('$rawData\n');
     }
   }
 
@@ -612,9 +652,23 @@ class EngineClient extends ChangeNotifier {
     notifyListeners();
   }
 
-  void _log(String text) {
+  void _logTerminal(String text) {
     _terminalOutput.add(text);
     notifyListeners();
+  }
+
+  void _logOutput(String text) {
+    _outputLogs.add(text);
+    notifyListeners();
+  }
+
+  void _logDebug(String text) {
+    _debugLogs.add(text);
+    notifyListeners();
+  }
+
+  void _log(String text) {
+    _logOutput(text);
   }
 
   @override

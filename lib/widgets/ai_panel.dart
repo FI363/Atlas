@@ -1,7 +1,10 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../state/agent_state.dart';
+import '../state/atlas_settings.dart';
+import '../state/local_model_state.dart';
 import '../state/workspace_state.dart';
 import 'diff_view.dart';
 
@@ -199,71 +202,114 @@ class _AiPanelState extends State<AiPanel> {
       ),
       child: Column(
         children: [
-          // Header Bar with Mode Switch
-          SizedBox(
-            height: 42,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12),
-              child: Row(
-                children: [
-                  const Icon(Icons.auto_awesome, size: 16, color: Color(0xFFC586C0)),
-                  const SizedBox(width: 8),
-                  const Text(
-                    'ATLAS AGENT',
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      letterSpacing: 0.8,
-                      color: Color(0xFFCCCCCC),
-                    ),
-                  ),
-                  const Spacer(),
+          // Header Bar with Mode Switch & Model Status
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E1E1E),
+              border: Border(bottom: BorderSide(color: Theme.of(context).dividerColor)),
+            ),
+            child: Row(
+              children: [
+                // Mode Selector Dropdown
+                _ExecutionModeDropdown(
+                  currentMode: widget.workspaceState.localModels.executionMode,
+                  onChanged: (mode) {
+                    setState(() {
+                      widget.workspaceState.localModels.setExecutionMode(mode);
+                      if (mode == AiExecutionMode.local) {
+                        widget.workspaceState.settings.aiProvider = AiProvider.ollama;
+                      } else if (mode == AiExecutionMode.companion) {
+                        widget.workspaceState.settings.aiProvider = AiProvider.openRouter;
+                      }
+                      widget.workspaceState.applySettings();
+                    });
+                  },
+                ),
 
-                  // Toggle Agent Mode
-                  Tooltip(
-                    message: widget.workspaceState.settings.useAgentMode
-                        ? 'Agent Mode (MCP Tool Execution Active)'
-                        : 'Simple Chat Mode',
+                const SizedBox(width: 6),
+
+                // Local Model Manager Button (opens modal)
+                InkWell(
+                  onTap: () => _showLocalModelManager(context),
+                  borderRadius: BorderRadius.circular(4),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF2D2D2D),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: const Color(0xFF3C3C3C)),
+                    ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Text(
-                          widget.workspaceState.settings.useAgentMode ? 'AGENT' : 'CHAT',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                            color: widget.workspaceState.settings.useAgentMode
-                                ? const Color(0xFF4FC3F7)
-                                : const Color(0xFF8E8E8E),
+                        Container(
+                          width: 6,
+                          height: 6,
+                          decoration: const BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: Color(0xFF4EC9B0),
                           ),
                         ),
-                        Switch(
-                          value: widget.workspaceState.settings.useAgentMode,
-                          onChanged: (val) {
-                            setState(() {
-                              widget.workspaceState.settings.useAgentMode = val;
-                              widget.workspaceState.applySettings();
-                            });
-                          },
-                          activeThumbColor: const Color(0xFF007ACC),
-                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        const SizedBox(width: 4),
+                        Text(
+                          widget.workspaceState.localModels.executionMode == AiExecutionMode.local
+                              ? widget.workspaceState.localModels.activeModel.name
+                              : widget.workspaceState.localModels.executionMode == AiExecutionMode.companion
+                                  ? 'Qwen3-Coder-Next'
+                                  : widget.workspaceState.settings.aiProvider.label,
+                          style: const TextStyle(fontSize: 10.5, color: Color(0xFFCCCCCC), fontWeight: FontWeight.w500),
                         ),
                       ],
                     ),
                   ),
+                ),
 
-                  IconButton(
-                    icon: const Icon(Icons.close_rounded, size: 16, color: Color(0xFF8E8E8E)),
-                    onPressed: widget.workspaceState.toggleAiPanel,
-                    splashRadius: 16,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
+                const Spacer(),
+
+                // Toggle Agent Mode
+                Tooltip(
+                  message: widget.workspaceState.settings.useAgentMode
+                      ? 'Agent Mode (MCP Tool Execution Active)'
+                      : 'Simple Chat Mode',
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        widget.workspaceState.settings.useAgentMode ? 'AGENT' : 'CHAT',
+                        style: TextStyle(
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.bold,
+                          color: widget.workspaceState.settings.useAgentMode
+                              ? const Color(0xFF4FC3F7)
+                              : const Color(0xFF8E8E8E),
+                        ),
+                      ),
+                      Switch(
+                        value: widget.workspaceState.settings.useAgentMode,
+                        onChanged: (val) {
+                          setState(() {
+                            widget.workspaceState.settings.useAgentMode = val;
+                            widget.workspaceState.applySettings();
+                          });
+                        },
+                        activeThumbColor: const Color(0xFF007ACC),
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                ),
+
+                IconButton(
+                  icon: const Icon(Icons.close_rounded, size: 16, color: Color(0xFF8E8E8E)),
+                  onPressed: widget.workspaceState.toggleAiPanel,
+                  splashRadius: 16,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(),
+                ),
+              ],
             ),
           ),
-          const Divider(height: 1),
 
           // Stream & Active Agent Operations Body
           Expanded(
@@ -321,47 +367,48 @@ class _AiPanelState extends State<AiPanel> {
             ),
 
           if (_attachments.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               child: Wrap(
                 spacing: 8,
                 runSpacing: 8,
                 children: [
                   for (int i = 0; i < _attachments.length; i++)
-                    _AttachmentChip(
+                    _AttachmentPreviewCard(
                       attachment: _attachments[i],
                       onRemove: () => _removeAttachmentAt(i),
                     ),
                 ],
               ),
             ),
-          const SizedBox(height: 8),
 
-          // Input Box
+          // Input Box Area
           Padding(
-            padding: const EdgeInsets.only(left: 12, right: 12, bottom: 12),
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
             child: Container(
               decoration: BoxDecoration(
-                color: const Color(0xFF3C3C3C),
-                borderRadius: BorderRadius.circular(6),
-                border: Border.all(color: const Color(0xFF454545)),
-              ),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  IconButton(
-                    tooltip: 'Attach files',
-                    onPressed: () {
-                      widget.workspaceState.engine.pickAttachments();
-                      _setStatus('Selecting files...');
-                    },
-                    icon: const Icon(Icons.add_circle_outline, size: 18, color: Color(0xFF9D9D9D)),
-                    splashRadius: 16,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
+                color: const Color(0xFF252526),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: _inputFocusNode.hasFocus
+                      ? const Color(0xFF007ACC)
+                      : const Color(0xFF3C3C3C),
+                  width: 1.2,
+                ),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Color(0x33000000),
+                    blurRadius: 6,
+                    offset: Offset(0, 2),
                   ),
-                  Expanded(
+                ],
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  // Text Area
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(10, 8, 10, 4),
                     child: Focus(
                       focusNode: _keyboardFocusNode,
                       onKeyEvent: (node, event) {
@@ -378,46 +425,117 @@ class _AiPanelState extends State<AiPanel> {
                       child: TextField(
                         controller: _inputController,
                         focusNode: _inputFocusNode,
-                        maxLines: 4,
+                        maxLines: 5,
                         minLines: 1,
-                        style: const TextStyle(fontSize: 13, color: Colors.white),
+                        style: const TextStyle(fontSize: 13, color: Colors.white, height: 1.35),
                         decoration: InputDecoration(
                           hintText: widget.workspaceState.settings.useAgentMode
-                              ? 'Assign Atlas Agent a task...'
-                              : 'Ask AI Agent...',
-                          hintStyle: const TextStyle(color: Color(0xFF8E8E8E), fontSize: 12),
+                              ? 'Assign Atlas Agent a coding task...'
+                              : 'Ask Atlas AI a question...',
+                          hintStyle: const TextStyle(color: Color(0xFF858585), fontSize: 12.5),
                           border: InputBorder.none,
                           isDense: true,
-                          contentPadding: EdgeInsets.zero,
+                          contentPadding: const EdgeInsets.symmetric(vertical: 4),
                         ),
                         onTapOutside: (_) => _inputFocusNode.unfocus(),
                       ),
                     ),
                   ),
-                  const SizedBox(width: 6),
 
-                  if (agentState.isAgentRunning)
-                    IconButton(
-                      tooltip: 'Stop Agent Execution',
-                      onPressed: () => widget.workspaceState.engine.cancelAgent(),
-                      icon: const Icon(Icons.stop_circle_outlined, size: 20, color: Color(0xFFF85149)),
-                      splashRadius: 16,
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                    )
-                  else
-                    InkWell(
-                      onTap: _canSend
-                          ? () {
-                              _sendPrompt(_inputController.text);
-                              _inputFocusNode.requestFocus();
-                            }
-                          : null,
-                      child: const Padding(
-                        padding: EdgeInsets.all(4.0),
-                        child: Icon(Icons.send_rounded, size: 16, color: Color(0xFF007ACC)),
-                      ),
+                  // Bottom Action Bar
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+                    decoration: const BoxDecoration(
+                      border: Border(top: BorderSide(color: Color(0xFF2D2D2D))),
                     ),
+                    child: Row(
+                      children: [
+                        // Attachment Button
+                        IconButton(
+                          tooltip: 'Attach files or images',
+                          onPressed: () {
+                            widget.workspaceState.engine.pickAttachments();
+                            _setStatus('Selecting files...');
+                          },
+                          icon: const Icon(Icons.attach_file_rounded, size: 19, color: Color(0xFFAAAAAA)),
+                          splashRadius: 18,
+                          padding: const EdgeInsets.all(6),
+                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                        ),
+                        IconButton(
+                          tooltip: 'Paste from clipboard',
+                          onPressed: () {
+                            widget.workspaceState.engine.pasteClipboardAttachment();
+                            _setStatus('Reading clipboard...');
+                          },
+                          icon: const Icon(Icons.content_paste_rounded, size: 17, color: Color(0xFFAAAAAA)),
+                          splashRadius: 18,
+                          padding: const EdgeInsets.all(6),
+                          constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                        ),
+                        const SizedBox(width: 4),
+
+                        // Model info badge (clickable to settings)
+                        InkWell(
+                          onTap: widget.workspaceState.openSettings,
+                          borderRadius: BorderRadius.circular(4),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF1E1E1E),
+                              borderRadius: BorderRadius.circular(4),
+                              border: Border.all(color: const Color(0xFF333333)),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.auto_awesome, size: 11, color: Color(0xFF3794FF)),
+                                const SizedBox(width: 4),
+                                Text(
+                                  widget.workspaceState.settings.aiProvider.label,
+                                  style: const TextStyle(fontSize: 10.5, color: Color(0xFFCCCCCC)),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+
+                        const Spacer(),
+
+                        // Send / Stop Button
+                        if (agentState.isAgentRunning)
+                          IconButton(
+                            tooltip: 'Stop Agent Execution',
+                            onPressed: () => widget.workspaceState.engine.cancelAgent(),
+                            icon: const Icon(Icons.stop_circle_rounded, size: 22, color: Color(0xFFF85149)),
+                            splashRadius: 18,
+                            padding: const EdgeInsets.all(4),
+                            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+                          )
+                        else
+                          IconButton(
+                            tooltip: 'Send Message (Enter)',
+                            onPressed: _canSend
+                                ? () {
+                                    _sendPrompt(_inputController.text);
+                                    _inputFocusNode.requestFocus();
+                                  }
+                                : null,
+                            icon: Icon(
+                              Icons.arrow_upward_rounded,
+                              size: 18,
+                              color: _canSend ? Colors.white : const Color(0xFF666666),
+                            ),
+                            style: IconButton.styleFrom(
+                              backgroundColor: _canSend ? const Color(0xFF007ACC) : const Color(0xFF333333),
+                              shape: const CircleBorder(),
+                              padding: const EdgeInsets.all(6),
+                              minimumSize: const Size(28, 28),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -588,7 +706,7 @@ class _AiPanelState extends State<AiPanel> {
       if (args.containsKey('query')) return 'query: "${args['query']}"';
       if (args.containsKey('command')) return 'cmd: "${args['command']}"';
     }
-    return args ? args.toString() : '';
+    return args != null ? args.toString() : '';
   }
 
   Widget _buildMessageBubble({required bool isUser, required String content}) {
@@ -847,30 +965,356 @@ class _Segment {
   });
 }
 
-class _AttachmentChip extends StatelessWidget {
-  const _AttachmentChip({required this.attachment, required this.onRemove});
+class _AttachmentPreviewCard extends StatelessWidget {
+  const _AttachmentPreviewCard({required this.attachment, required this.onRemove});
 
   final Map<String, dynamic> attachment;
   final VoidCallback onRemove;
+
+  String _formatSize(dynamic size) {
+    if (size == null) return '';
+    final num bytes = size is num ? size : num.tryParse(size.toString()) ?? 0;
+    if (bytes <= 0) return '';
+    if (bytes < 1024) return '$bytes B';
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
 
   @override
   Widget build(BuildContext context) {
     final isImage = attachment['kind'] == 'image' || attachment['type'] == 'image';
     final name = (attachment['name'] as String?) ?? 'attachment';
-    return Chip(
-      avatar: Icon(isImage ? Icons.image_outlined : Icons.insert_drive_file_outlined,
-          size: 15, color: const Color(0xFF9CDCFE)),
-      label: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 180),
-        child: Text(name, overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 11, color: Color(0xFFD4D4D4))),
+    final dataBase64 = attachment['dataBase64'] as String?;
+    final sizeStr = _formatSize(attachment['size']);
+
+    Widget leadingPreview;
+    if (isImage && dataBase64 != null && dataBase64.isNotEmpty) {
+      try {
+        final bytes = base64Decode(dataBase64);
+        leadingPreview = ClipRRect(
+          borderRadius: BorderRadius.circular(3),
+          child: Image.memory(
+            bytes,
+            width: 26,
+            height: 26,
+            fit: BoxFit.cover,
+            errorBuilder: (_, __, ___) => const Icon(Icons.image_outlined, size: 16, color: Color(0xFF9CDCFE)),
+          ),
+        );
+      } catch (_) {
+        leadingPreview = const Icon(Icons.image_outlined, size: 16, color: Color(0xFF9CDCFE));
+      }
+    } else if (name.endsWith('.pdf')) {
+      leadingPreview = const Icon(Icons.picture_as_pdf_outlined, size: 16, color: Color(0xFFF85149));
+    } else if (name.endsWith('.dart') || name.endsWith('.js') || name.endsWith('.ts') || name.endsWith('.json')) {
+      leadingPreview = const Icon(Icons.code_rounded, size: 16, color: Color(0xFF4EC9B0));
+    } else {
+      leadingPreview = const Icon(Icons.insert_drive_file_outlined, size: 16, color: Color(0xFF9CDCFE));
+    }
+
+    return Container(
+      constraints: const BoxConstraints(maxWidth: 220),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2D2D30),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: const Color(0xFF454545)),
       ),
-      deleteIcon: const Icon(Icons.close, size: 14, color: Color(0xFF9D9D9D)),
-      onDeleted: onRemove,
-      backgroundColor: const Color(0xFF2D2D30),
-      side: const BorderSide(color: Color(0xFF454545)),
-      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      visualDensity: VisualDensity.compact,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          leadingPreview,
+          const SizedBox(width: 8),
+          Flexible(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  name,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11.5, color: Color(0xFFE0E0E0), fontWeight: FontWeight.w500),
+                ),
+                if (sizeStr.isNotEmpty)
+                  Text(
+                    sizeStr,
+                    style: const TextStyle(fontSize: 10, color: Color(0xFF888888)),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 6),
+          InkWell(
+            onTap: onRemove,
+            borderRadius: BorderRadius.circular(10),
+            child: const Padding(
+              padding: EdgeInsets.all(2.0),
+              child: Icon(Icons.close, size: 14, color: Color(0xFF9E9E9E)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ExecutionModeDropdown extends StatelessWidget {
+  const _ExecutionModeDropdown({required this.currentMode, required this.onChanged});
+
+  final AiExecutionMode currentMode;
+  final ValueChanged<AiExecutionMode> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 26,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2D2D2D),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: const Color(0xFF3C3C3C)),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<AiExecutionMode>(
+          value: currentMode,
+          isDense: true,
+          dropdownColor: const Color(0xFF252526),
+          borderRadius: BorderRadius.circular(6),
+          style: const TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.w600),
+          icon: const Icon(Icons.keyboard_arrow_down_rounded, size: 14, color: Color(0xFF8E8E8E)),
+          items: [
+            DropdownMenuItem(
+              value: AiExecutionMode.cloud,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: const [
+                  Icon(Icons.cloud_outlined, size: 13, color: Color(0xFF4FC3F7)),
+                  SizedBox(width: 5),
+                  Text('Cloud AI'),
+                ],
+              ),
+            ),
+            DropdownMenuItem(
+              value: AiExecutionMode.local,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: const [
+                  Icon(Icons.tablet_mac_rounded, size: 13, color: Color(0xFF4EC9B0)),
+                  SizedBox(width: 5),
+                  Text('Local iPad AI'),
+                ],
+              ),
+            ),
+            DropdownMenuItem(
+              value: AiExecutionMode.companion,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: const [
+                  Icon(Icons.laptop_chromebook_rounded, size: 13, color: Color(0xFFFF9800)),
+                  SizedBox(width: 5),
+                  Text('Laptop AI'),
+                ],
+              ),
+            ),
+          ],
+          onChanged: (mode) {
+            if (mode != null) onChanged(mode);
+          },
+        ),
+      ),
+    );
+  }
+}
+
+void _showLocalModelManager(BuildContext context) {
+  showDialog(
+    context: context,
+    builder: (dialogCtx) => const _LocalModelManagerDialog(),
+  );
+}
+
+class _LocalModelManagerDialog extends StatefulWidget {
+  const _LocalModelManagerDialog();
+
+  @override
+  State<_LocalModelManagerDialog> createState() => _LocalModelManagerDialogState();
+}
+
+class _LocalModelManagerDialogState extends State<_LocalModelManagerDialog> {
+  @override
+  Widget build(BuildContext context) {
+    final ws = context.findAncestorWidgetOfExactType<AiPanel>()?.workspaceState;
+    if (ws == null) return const SizedBox.shrink();
+    final localModels = ws.localModels;
+
+    return AlertDialog(
+      backgroundColor: const Color(0xFF1E1E1E),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      titlePadding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+      contentPadding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+      title: Row(
+        children: [
+          const Icon(Icons.memory_rounded, size: 18, color: Color(0xFF4EC9B0)),
+          const SizedBox(width: 8),
+          const Text('Local AI Model Manager', style: TextStyle(fontSize: 14, color: Colors.white, fontWeight: FontWeight.bold)),
+          const Spacer(),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: const Color(0xFF2D2D2D),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: const Color(0xFF3C3C3C)),
+            ),
+            child: const Text('Apple A16 · Metal', style: TextStyle(fontSize: 10, color: Color(0xFF4EC9B0), fontFamily: 'Consolas')),
+          ),
+        ],
+      ),
+      content: SizedBox(
+        width: 540,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Context Budget Selector
+              Container(
+                margin: const EdgeInsets.only(top: 8, bottom: 12),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF252526),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: const Color(0xFF333333)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.tune_rounded, size: 15, color: Color(0xFF9D9D9D)),
+                    const SizedBox(width: 8),
+                    const Text('Context Budget:', style: TextStyle(fontSize: 11.5, color: Color(0xFFCCCCCC))),
+                    const Spacer(),
+                    for (final budget in [8192, 16384, 32768])
+                      Padding(
+                        padding: const EdgeInsets.only(left: 6),
+                        child: ChoiceChip(
+                          label: Text('${budget ~/ 1024}K', style: const TextStyle(fontSize: 10.5)),
+                          selected: localModels.contextBudget == budget,
+                          selectedColor: const Color(0xFF007ACC),
+                          backgroundColor: const Color(0xFF2D2D2D),
+                          labelStyle: TextStyle(
+                            color: localModels.contextBudget == budget ? Colors.white : const Color(0xFF8E8E8E),
+                          ),
+                          onSelected: (_) => setState(() => localModels.setContextBudget(budget)),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+
+              const Text('AVAILABLE ON-DEVICE & COMPANION MODELS', style: TextStyle(fontSize: 10.5, fontWeight: FontWeight.bold, color: Color(0xFF8E8E8E), letterSpacing: 0.5)),
+              const SizedBox(height: 8),
+
+              for (final model in localModels.catalog)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: localModels.selectedLocalModelId == model.id ? const Color(0xFF0D2D44) : const Color(0xFF252526),
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                      color: localModels.selectedLocalModelId == model.id ? const Color(0xFF007ACC) : const Color(0xFF333333),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Text(
+                                      model.name,
+                                      style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.bold, color: Colors.white),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                                      decoration: BoxDecoration(
+                                        color: const Color(0xFF333333),
+                                        borderRadius: BorderRadius.circular(3),
+                                      ),
+                                      child: Text(
+                                        model.quantization,
+                                        style: const TextStyle(fontSize: 9.5, color: Color(0xFF4EC9B0), fontFamily: 'Consolas'),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  '${model.category} • ${model.downloadSize} • ${model.requiredMemory}',
+                                  style: const TextStyle(fontSize: 10.5, color: Color(0xFF8E8E8E)),
+                                ),
+                              ],
+                            ),
+                          ),
+
+                          // Select / Active Button
+                          if (localModels.selectedLocalModelId == model.id)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF238636),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: const Text('Active', style: TextStyle(fontSize: 10.5, color: Colors.white, fontWeight: FontWeight.bold)),
+                            )
+                          else
+                            ElevatedButton(
+                              onPressed: () {
+                                setState(() {
+                                  localModels.selectModel(model.id);
+                                });
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: const Color(0xFF007ACC),
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                minimumSize: Size.zero,
+                              ),
+                              child: const Text('Select', style: TextStyle(fontSize: 10.5)),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 4,
+                        runSpacing: 4,
+                        children: model.capabilities.map((cap) => Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1.5),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF1E1E1E),
+                            borderRadius: BorderRadius.circular(3),
+                            border: Border.all(color: const Color(0xFF383838)),
+                          ),
+                          child: Text(cap, style: const TextStyle(fontSize: 9.5, color: Color(0xFF9CDCFE))),
+                        )).toList(),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Close', style: TextStyle(color: Color(0xFFCCCCCC))),
+        ),
+      ],
     );
   }
 }

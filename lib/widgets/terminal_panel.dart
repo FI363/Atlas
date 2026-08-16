@@ -155,16 +155,33 @@ class _TerminalPanelState extends State<TerminalPanel> {
                 ),
 
                 // Terminal Action Controls
-                _TerminalHeaderAction(
-                  icon: Icons.stop_circle_outlined,
-                  tooltip: 'Kill Running Process (Ctrl+C)',
-                  color: const Color(0xFFF44336),
-                  onTap: () => widget.workspaceState.engine.killProcess(),
-                ),
+                if (_activeTab == 'TERMINAL')
+                  _TerminalHeaderAction(
+                    icon: Icons.stop_circle_outlined,
+                    tooltip: 'Kill Running Process (Ctrl+C)',
+                    color: const Color(0xFFF44336),
+                    onTap: () => widget.workspaceState.engine.killProcess(),
+                  ),
                 _TerminalHeaderAction(
                   icon: Icons.clear_all_rounded,
-                  tooltip: 'Clear Output (cls)',
-                  onTap: () => widget.workspaceState.engine.clearTerminal(),
+                  tooltip: _activeTab == 'TERMINAL'
+                      ? 'Clear Terminal'
+                      : _activeTab == 'OUTPUT'
+                          ? 'Clear Output'
+                          : _activeTab == 'DEBUG CONSOLE'
+                              ? 'Clear Debug Console'
+                              : 'Clear Problems',
+                  onTap: () {
+                    if (_activeTab == 'TERMINAL') {
+                      widget.workspaceState.engine.clearTerminal();
+                    } else if (_activeTab == 'OUTPUT') {
+                      widget.workspaceState.engine.clearOutput();
+                    } else if (_activeTab == 'DEBUG CONSOLE') {
+                      widget.workspaceState.engine.clearDebug();
+                    } else {
+                      widget.workspaceState.engine.clearProblems();
+                    }
+                  },
                 ),
                 _TerminalHeaderAction(
                   icon: Icons.close_rounded,
@@ -220,13 +237,20 @@ class _TerminalPanelState extends State<TerminalPanel> {
         children: [
           Expanded(
             child: SelectionArea(
-              child: ListView.builder(
-                controller: _scrollController,
-                itemCount: output.length,
-                itemBuilder: (context, index) {
-                  return RichText(text: _parseAnsiToTextSpan(output[index]));
-                },
-              ),
+              child: output.isEmpty
+                  ? const Center(
+                      child: Text(
+                        'Terminal ready. Type a command or run a project task.',
+                        style: TextStyle(color: Color(0xFF555555), fontSize: 12, fontFamily: 'Consolas'),
+                      ),
+                    )
+                  : ListView.builder(
+                      controller: _scrollController,
+                      itemCount: output.length,
+                      itemBuilder: (context, index) {
+                        return RichText(text: _parseAnsiToTextSpan(output[index]));
+                      },
+                    ),
             ),
           ),
 
@@ -286,6 +310,112 @@ class _TerminalPanelState extends State<TerminalPanel> {
       );
     }
 
+    if (_activeTab == 'OUTPUT') {
+      final logs = widget.workspaceState.engine.outputLogs;
+      if (logs.isEmpty) {
+        return const Center(
+          child: Text(
+            'No build or task output yet.',
+            style: TextStyle(color: Color(0xFF8E8E8E), fontSize: 13),
+          ),
+        );
+      }
+      return SelectionArea(
+        child: ListView.builder(
+          controller: _scrollController,
+          itemCount: logs.length,
+          itemBuilder: (context, index) {
+            return RichText(text: _parseAnsiToTextSpan(logs[index]));
+          },
+        ),
+      );
+    }
+
+    if (_activeTab == 'DEBUG CONSOLE') {
+      final debugs = widget.workspaceState.engine.debugLogs;
+      if (debugs.isEmpty) {
+        return const Center(
+          child: Text(
+            'Debug Console is active. Agent tool calls and engine traces appear here.',
+            style: TextStyle(color: Color(0xFF8E8E8E), fontSize: 13),
+          ),
+        );
+      }
+      return SelectionArea(
+        child: ListView.builder(
+          controller: _scrollController,
+          itemCount: debugs.length,
+          itemBuilder: (context, index) {
+            final text = debugs[index];
+            Color color = const Color(0xFF9CDCFE);
+            if (text.startsWith('[Tool Call]')) color = const Color(0xFF4FC3F7);
+            if (text.startsWith('[Tool Result]')) color = const Color(0xFF7EE787);
+            if (text.startsWith('[ERROR]')) color = const Color(0xFFF44336);
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 2),
+              child: Text(
+                text.trimRight(),
+                style: TextStyle(color: color, fontSize: 12, fontFamily: 'Consolas'),
+              ),
+            );
+          },
+        ),
+      );
+    }
+
+    if (_activeTab == 'PROBLEMS') {
+      final problems = widget.workspaceState.engine.problems;
+      if (problems.isEmpty) {
+        return const Center(
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.check_circle_outline, size: 16, color: Color(0xFF7EE787)),
+              SizedBox(width: 8),
+              Text(
+                'No problems detected in workspace.',
+                style: TextStyle(color: Color(0xFF8E8E8E), fontSize: 13),
+              ),
+            ],
+          ),
+        );
+      }
+      return ListView.builder(
+        itemCount: problems.length,
+        itemBuilder: (context, index) {
+          final problem = problems[index];
+          final isError = problem['type'] == 'error';
+          return Container(
+            margin: const EdgeInsets.symmetric(vertical: 3),
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1E1E1E),
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(
+                color: isError ? const Color(0xFFF44336).withValues(alpha: 0.4) : const Color(0xFFD19A66).withValues(alpha: 0.4),
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  isError ? Icons.error_outline : Icons.warning_amber_rounded,
+                  size: 16,
+                  color: isError ? const Color(0xFFF44336) : const Color(0xFFD19A66),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    problem['message']?.toString() ?? 'Error',
+                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      );
+    }
+
     return Center(
       child: Text(
         'No ${_activeTab.toLowerCase()} to display.',
@@ -294,19 +424,37 @@ class _TerminalPanelState extends State<TerminalPanel> {
     );
   }
 
-  /// Simple ANSI color code parser (\x1b[31m, \x1b[32m, etc.) to styled TextSpan
-  TextSpan _parseAnsiToTextSpan(String text) {
-    // Regex for ANSI escape sequences like \x1b[31m or \u001b[0m
-    final ansiRegex = RegExp(r'\x1b\[[0-9;]*m');
-    final matches = ansiRegex.allMatches(text);
+  /// Robust ANSI and VT100 control sequence parser that strips cursor/screen codes
+  /// (\x1b[K, \x1b[9;39H, \x1b[?25h, OSC sequences) and converts SGR colors to styled TextSpans.
+  TextSpan _parseAnsiToTextSpan(String rawLine) {
+    // 1. Strip OSC sequences: \x1b]...\x07 or \x1b]...\x1b\
+    String cleaned = rawLine.replaceAll(RegExp(r'\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)'), '');
+
+    // 2. Strip character set selections (\x1b(B, etc.)
+    cleaned = cleaned.replaceAll(RegExp(r'\x1b\([a-zA-Z0-9]'), '');
+
+    // 3. Strip all non-SGR CSI control sequences (e.g. \x1b[K, \x1b[2J, \x1b[?25h, \x1b[9;39H, etc.)
+    // Matches anything starting with \x1b[ up to a command letter, EXCEPT 'm' (which is SGR color)
+    cleaned = cleaned.replaceAll(RegExp(r'\x1b\[\??[0-9;]*[a-ln-zA-LN-Z]'), '');
+
+    // 4. Strip stray non-printable control characters (bell, standalone escapes)
+    cleaned = cleaned.replaceAll(RegExp(r'[\x00-\x08\x0B\x0C\x0E-\x1A\x1C-\x1F]'), '');
+
+    // 5. Parse SGR color sequences: \x1b[...m
+    final sgrRegex = RegExp(r'\x1b\[([0-9;]*)m');
+    final matches = sgrRegex.allMatches(cleaned);
 
     if (matches.isEmpty) {
-      Color textColor = const Color(0xFFCCCCCC);
-      if (text.startsWith('\$ ')) textColor = const Color(0xFF569CD6);
-      if (text.startsWith('[SYSTEM]')) textColor = const Color(0xFF4EC9B0);
-      if (text.startsWith('[ERROR]')) textColor = const Color(0xFFF44336);
+      Color textColor = const Color(0xFFD4D4D4);
+      if (cleaned.startsWith('\$ ') || cleaned.startsWith('PS ') || cleaned.endsWith('>')) {
+        textColor = const Color(0xFF4EC9B0);
+      } else if (cleaned.startsWith('[SYSTEM]') || cleaned.startsWith('[Engine]')) {
+        textColor = const Color(0xFF569CD6);
+      } else if (cleaned.startsWith('[ERROR]') || cleaned.toLowerCase().contains('error:')) {
+        textColor = const Color(0xFFF44336);
+      }
       return TextSpan(
-        text: text,
+        text: cleaned,
         style: TextStyle(
           color: textColor,
           fontSize: 13,
@@ -316,17 +464,99 @@ class _TerminalPanelState extends State<TerminalPanel> {
       );
     }
 
-    List<TextSpan> spans = [];
+    final List<TextSpan> spans = [];
     int lastEnd = 0;
-    Color currentColor = const Color(0xFFCCCCCC);
+    Color currentColor = const Color(0xFFD4D4D4);
+    FontWeight currentWeight = FontWeight.normal;
 
     for (final match in matches) {
       if (match.start > lastEnd) {
+        final segmentText = cleaned.substring(lastEnd, match.start);
+        if (segmentText.isNotEmpty) {
+          spans.add(
+            TextSpan(
+              text: segmentText,
+              style: TextStyle(
+                color: currentColor,
+                fontWeight: currentWeight,
+                fontSize: 13,
+                fontFamily: 'Consolas',
+                height: 1.35,
+              ),
+            ),
+          );
+        }
+      }
+
+      final params = match.group(1)?.split(';').map((s) => int.tryParse(s) ?? 0).toList() ?? [0];
+      if (params.isEmpty) params.add(0);
+
+      for (int i = 0; i < params.length; i++) {
+        final code = params[i];
+        switch (code) {
+          case 0:
+            currentColor = const Color(0xFFD4D4D4);
+            currentWeight = FontWeight.normal;
+            break;
+          case 1:
+            currentWeight = FontWeight.bold;
+            break;
+          case 2:
+          case 22:
+            currentWeight = FontWeight.normal;
+            break;
+          case 30:
+            currentColor = const Color(0xFF000000);
+            break;
+          case 31:
+          case 91:
+            currentColor = const Color(0xFFF44336); // Red / Bright Red
+            break;
+          case 32:
+          case 92:
+            currentColor = const Color(0xFF4CAF50); // Green / Bright Green
+            break;
+          case 33:
+          case 93:
+            currentColor = const Color(0xFFFFEB3B); // Yellow / Bright Yellow
+            break;
+          case 34:
+          case 94:
+            currentColor = const Color(0xFF2196F3); // Blue / Bright Blue
+            break;
+          case 35:
+          case 95:
+            currentColor = const Color(0xFFAB47BC); // Magenta
+            break;
+          case 36:
+          case 96:
+            currentColor = const Color(0xFF00BCD4); // Cyan / Bright Cyan
+            break;
+          case 37:
+          case 97:
+            currentColor = Colors.white; // White
+            break;
+          case 39:
+            currentColor = const Color(0xFFD4D4D4); // Default foreground
+            break;
+          case 90:
+            currentColor = const Color(0xFF808080); // Gray / Bright Black
+            break;
+        }
+      }
+
+      lastEnd = match.end;
+    }
+
+    if (lastEnd < cleaned.length) {
+      final remaining = cleaned.substring(lastEnd);
+      if (remaining.isNotEmpty) {
         spans.add(
           TextSpan(
-            text: text.substring(lastEnd, match.start),
+            text: remaining,
             style: TextStyle(
               color: currentColor,
+              fontWeight: currentWeight,
               fontSize: 13,
               fontFamily: 'Consolas',
               height: 1.35,
@@ -334,37 +564,6 @@ class _TerminalPanelState extends State<TerminalPanel> {
           ),
         );
       }
-
-      final code = text.substring(match.start, match.end);
-      if (code.contains('31')) {
-        currentColor = const Color(0xFFF44336); // Red
-      } else if (code.contains('32')) {
-        currentColor = const Color(0xFF4CAF50); // Green
-      } else if (code.contains('33')) {
-        currentColor = const Color(0xFFFFEB3B); // Yellow
-      } else if (code.contains('34')) {
-        currentColor = const Color(0xFF2196F3); // Blue
-      } else if (code.contains('36')) {
-        currentColor = const Color(0xFF00BCD4); // Cyan
-      } else if (code.contains('0')) {
-        currentColor = const Color(0xFFCCCCCC); // Reset
-      }
-
-      lastEnd = match.end;
-    }
-
-    if (lastEnd < text.length) {
-      spans.add(
-        TextSpan(
-          text: text.substring(lastEnd),
-          style: TextStyle(
-            color: currentColor,
-            fontSize: 13,
-            fontFamily: 'Consolas',
-            height: 1.35,
-          ),
-        ),
-      );
     }
 
     return TextSpan(children: spans);

@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import '../config/atlas_config.dart';
 import '../services/engine_client.dart';
 import 'atlas_settings.dart';
+import 'local_model_state.dart';
 
 /// Reactive workspace state: panel visibility, open tabs, drafts, resizable panel dimensions,
 /// command palette state, and the engine connection.
@@ -13,6 +14,9 @@ class WorkspaceState extends ChangeNotifier {
 
   /// Live settings object — mutate fields then call [applySettings] to notify.
   final AtlasSettings settings = AtlasSettings();
+
+  /// Local model manager and execution mode state.
+  final LocalModelState localModels = LocalModelState();
 
   // Panel visibility
   bool _explorerVisible = true;
