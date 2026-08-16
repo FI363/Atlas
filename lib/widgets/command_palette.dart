@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../state/workspace_state.dart';
+import 'ai_commands.dart';
 
 /// VS Code-style Command Palette modal (Ctrl+Shift+P).
 class CommandPalette extends StatefulWidget {
@@ -55,11 +56,19 @@ class _CommandPaletteState extends State<CommandPalette> {
         action: () => widget.workspaceState.toggleExplorer(),
       ),
       _CommandItem(
-        title: 'Project: Run Flutter App',
-        shortcut: 'F5',
-        icon: Icons.play_arrow_outlined,
-        action: () => widget.workspaceState.runProject(),
+        title: 'AI: Read File',
+        shortcut: '',
+        icon: Icons.file_present,
+        action: () => AiCommands.readFile(context),
       ),
+      _CommandItem(
+        title: 'AI: Apply Edit',
+        shortcut: '',
+        icon: Icons.edit,
+        action: () => AiCommands.applyEdit(context),
+      ),
+      // Existing commands follow
+
     ];
     _filteredItems = List.from(_allItems);
     _controller.addListener(_onSearchChanged);

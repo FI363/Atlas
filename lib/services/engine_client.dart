@@ -1,15 +1,19 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
+import '../state/agent_state.dart';
 
 /// WebSocket client for the companion Atlas backend engine.
 ///
 /// Handles authentication, terminal commands, file I/O, process termination,
-/// search, git operations, and AI Agent prompt messages over JSON-over-WS protocol.
+/// search, git operations, AI Agent prompt messages, and MCP tool-calling agent loops.
 class EngineClient extends ChangeNotifier {
   WebSocketChannel? _channel;
   bool _isConnected = false;
   int _connectionId = 0;
+
+  // Agent State
+  final AgentState agentState = AgentState();
 
   // Terminal output stream
   final List<String> _terminalOutput = [];
@@ -18,7 +22,7 @@ class EngineClient extends ChangeNotifier {
   final List<Map<String, dynamic>> _aiMessages = [
     {
       'isUser': false,
-      'content': 'Hello! I am your Atlas AI Coding Agent. Ask me a question, attach files with +, or paste an image from your clipboard with Ctrl+V.',
+      'content': 'Hello! I am your Atlas AI Coding Agent with MCP support. Ask me a question or assign me a coding task!',
     }
   ];
 
@@ -120,6 +124,7 @@ class EngineClient extends ChangeNotifier {
           if (connectionId != _connectionId) return;
           _isConnected = false;
           _isAiThinking = false;
+          agentState.cancelAgent();
           _log('Disconnected from engine.\n');
           notifyListeners();
         },
@@ -127,6 +132,7 @@ class EngineClient extends ChangeNotifier {
           if (connectionId != _connectionId) return;
           _isConnected = false;
           _isAiThinking = false;
+          agentState.cancelAgent();
           _log('Connection error: $error\n');
           notifyListeners();
         },
@@ -189,9 +195,10 @@ class EngineClient extends ChangeNotifier {
 
   void sendAiPrompt(
     String prompt, {
-    String? contextCode,
+    Map<String, dynamic>? workspaceContext,
     Map<String, dynamic>? settingsPayload,
     List<Map<String, dynamic>> attachments = const [],
+    bool useAgentMode = true,
   }) {
     _aiMessages.add({'isUser': true, 'content': prompt});
     _isAiThinking = true;
@@ -207,13 +214,54 @@ class EngineClient extends ChangeNotifier {
       return;
     }
 
-    _send({
-      'type': 'ai_prompt',
-      'prompt': prompt,
-      'contextCode': contextCode ?? '',
-      'settings': settingsPayload ?? {},
-      'attachments': attachments,
-    });
+    if (useAgentMode) {
+      agentState.startAgent(prompt);
+      _send({
+        'type': 'agent_start',
+        'prompt': prompt,
+        'ideContext': workspaceContext ?? {},
+        'settings': settingsPayload ?? {},
+      });
+    } else {
+      _send({
+        'type': 'ai_prompt',
+        'prompt': prompt,
+        'workspaceContext': workspaceContext ?? {},
+        'settings': settingsPayload ?? {},
+        'attachments': attachments,
+      });
+    }
+  }
+
+  void cancelAgent() {
+    if (_isConnected) {
+      _send({'type': 'agent_cancel'});
+    }
+    agentState.cancelAgent();
+    _isAiThinking = false;
+    notifyListeners();
+  }
+
+  void respondToApproval(String requestId, bool granted, {String? reason}) {
+    if (_isConnected) {
+      _send({
+        'type': 'agent_approval_response',
+        'requestId': requestId,
+        'granted': granted,
+        'reason': reason,
+      });
+    }
+    agentState.clearApproval();
+  }
+
+  void respondToDiff(bool accepted) {
+    if (_isConnected) {
+      _send({
+        'type': 'agent_diff_decision',
+        'accepted': accepted,
+      });
+    }
+    agentState.clearDiff();
   }
 
   // ── Workspace Search & Git ──────────────────────────────────────────────
@@ -275,7 +323,13 @@ class EngineClient extends ChangeNotifier {
 
   void createFile(String path) => _createEntry('create_file', path);
   void createDirectory(String path) => _createEntry('create_directory', path);
-  void openFolder([String? path]) => _send({'type': 'open_folder', if (path != null) 'path': path});
+  void openFolder([String? path]) {
+    if (path != null) {
+      _send({'type': 'open_folder', 'path': path});
+    } else {
+      _send({'type': 'open_folder'});
+    }
+  }
 
   void pickAttachments() {
     if (_isConnected) _send({'type': 'pick_attachments'});
@@ -293,6 +347,12 @@ class EngineClient extends ChangeNotifier {
       return;
     }
     _send({'type': type, 'path': path});
+  }
+
+  /// Add a message to the AI chat (user or system).
+  void addAiMessage({required bool isUser, required String content}) {
+    _aiMessages.add({'isUser': isUser, 'content': content});
+    notifyListeners();
   }
 
   void _send(Map<String, dynamic> payload) {
@@ -330,9 +390,38 @@ class EngineClient extends ChangeNotifier {
           return;
         case 'ai_response':
           _isAiThinking = false;
-          _aiMessages.add({'isUser': false, 'content': data['content'] as String});
+          _aiMessages.add({'isUser': false, 'content': data['content']?.toString() ?? ''});
           notifyListeners();
           return;
+
+        // ── Agent Messages ──────────────────────────────────────────────────
+        case 'agent_progress':
+          agentState.updateProgress(data['status'] as String? ?? '');
+          notifyListeners();
+          return;
+        case 'agent_tool_call':
+          agentState.addToolCall(Map<String, dynamic>.from(data as Map));
+          notifyListeners();
+          return;
+        case 'agent_tool_result':
+          agentState.completeToolCall(Map<String, dynamic>.from(data as Map));
+          notifyListeners();
+          return;
+        case 'agent_approval_request':
+          agentState.requestApproval(Map<String, dynamic>.from(data as Map));
+          notifyListeners();
+          return;
+        case 'agent_diff_proposal':
+          agentState.proposeDiff(Map<String, dynamic>.from(data as Map));
+          notifyListeners();
+          return;
+        case 'agent_response':
+          _isAiThinking = false;
+          agentState.finishAgent(data['content'] as String? ?? '');
+          _aiMessages.add({'isUser': false, 'content': data['content'] as String? ?? ''});
+          notifyListeners();
+          return;
+
         case 'search_results':
           _searchResults = List<Map<String, dynamic>>.from(data['results']);
           notifyListeners();
@@ -388,6 +477,12 @@ class EngineClient extends ChangeNotifier {
     } catch (e) {
       _log('$rawData\n');
     }
+  }
+
+  /// Public method to inject a message into the AI chat.
+  void injectAiMessage({required bool isUser, required String content}) {
+    _aiMessages.add({'isUser': isUser, 'content': content});
+    notifyListeners();
   }
 
   void _log(String text) {

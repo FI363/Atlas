@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "engine": "npm --prefix backend start",
-    "dev": "concurrently -k \"npm run engine\" \"flutter run -d chrome --dart-define=ATLAS_ENGINE_TOKEN=dev-token\"",
+    "dev": "concurrently -k \"npm run engine\" \"flutter run -d web-server --web-hostname localhost --web-port 8081 --dart-define=ATLAS_ENGINE_TOKEN=dev-token\"",
     "ipad": "concurrently -k \"npm run engine\" \"flutter run -d web-server --web-hostname 0.0.0.0 --web-port 8081 --dart-define=ATLAS_ENGINE_TOKEN=dev-token\""
   },
   "devDependencies": {

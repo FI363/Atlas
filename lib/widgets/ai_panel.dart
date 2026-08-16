@@ -1,11 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../state/agent_state.dart';
 import '../state/workspace_state.dart';
+import 'diff_view.dart';
 
-/// Right-side panel for interactive AI Agent chat stream and file/image attachments.
-/// Supports code extraction, 1-click code application to workspace files, terminal execution,
-/// and interactive Antigravity-style agent capabilities.
+/// Right-side panel for interactive AI Agent chat stream, file/image attachments,
+/// live tool execution step cards, permission approval requests, and diff reviews.
 class AiPanel extends StatefulWidget {
   const AiPanel({super.key, required this.workspaceState});
 
@@ -27,11 +28,13 @@ class _AiPanelState extends State<AiPanel> {
   void initState() {
     super.initState();
     widget.workspaceState.engine.addListener(_onEngineChanged);
+    widget.workspaceState.engine.agentState.addListener(_onAgentStateChanged);
   }
 
   @override
   void dispose() {
     widget.workspaceState.engine.removeListener(_onEngineChanged);
+    widget.workspaceState.engine.agentState.removeListener(_onAgentStateChanged);
     _inputController.dispose();
     _scrollController.dispose();
     _inputFocusNode.dispose();
@@ -50,6 +53,11 @@ class _AiPanelState extends State<AiPanel> {
       });
     }
     if (clipboard != null) _handleClipboardOrAttachment(clipboard);
+    _scrollToBottom();
+  }
+
+  void _onAgentStateChanged() {
+    if (mounted) setState(() {});
     _scrollToBottom();
   }
 
@@ -72,24 +80,38 @@ class _AiPanelState extends State<AiPanel> {
     if (trimmed.isEmpty) return;
 
     final activeFile = widget.workspaceState.activeFile;
-    final contextCode = activeFile != null
-        ? widget.workspaceState.contentForFile(activeFile)
-        : null;
 
-    final promptWithContext = activeFile != null
-        ? '[Active File: $activeFile]\n$trimmed'
-        : trimmed;
+    // Build full workspace context for the AI Agent
+    final openFilesContext = <Map<String, String>>[];
+    for (final filePath in widget.workspaceState.openFiles) {
+      final content = widget.workspaceState.contentForFile(filePath);
+      if (content != null) {
+        openFilesContext.add({'path': filePath, 'content': content});
+      }
+    }
+
+    final workspaceContext = <String, dynamic>{
+      'projectName': widget.workspaceState.engine.projectName,
+      'cwd': widget.workspaceState.engine.cwd,
+      'activeFile': activeFile ?? '',
+      'openFiles': openFilesContext,
+      'fileTree': widget.workspaceState.engine.fileTree,
+    };
+
+    final useAgent = widget.workspaceState.settings.useAgentMode;
 
     widget.workspaceState.engine.sendAiPrompt(
-      promptWithContext,
-      contextCode: contextCode,
+      trimmed,
+      workspaceContext: workspaceContext,
       settingsPayload: widget.workspaceState.settings.toMap(),
       attachments: List<Map<String, dynamic>>.from(_attachments),
+      useAgentMode: useAgent,
     );
+
     _inputController.clear();
     setState(() {
       _attachments.clear();
-      _statusText = 'Sent to AI';
+      _statusText = useAgent ? 'Agent Task Started' : 'Sent to AI';
     });
   }
 
@@ -165,6 +187,7 @@ class _AiPanelState extends State<AiPanel> {
   @override
   Widget build(BuildContext context) {
     final messages = widget.workspaceState.engine.aiMessages;
+    final agentState = widget.workspaceState.engine.agentState;
 
     return DecoratedBox(
       decoration: BoxDecoration(
@@ -173,25 +196,59 @@ class _AiPanelState extends State<AiPanel> {
       ),
       child: Column(
         children: [
-          // Header
+          // Header Bar with Mode Switch
           SizedBox(
-            height: 38,
+            height: 42,
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 14),
+              padding: const EdgeInsets.symmetric(horizontal: 12),
               child: Row(
                 children: [
                   const Icon(Icons.auto_awesome, size: 16, color: Color(0xFFC586C0)),
                   const SizedBox(width: 8),
                   const Text(
-                    'ATLAS AI AGENT',
+                    'ATLAS AGENT',
                     style: TextStyle(
                       fontSize: 11,
-                      fontWeight: FontWeight.w600,
+                      fontWeight: FontWeight.bold,
                       letterSpacing: 0.8,
                       color: Color(0xFFCCCCCC),
                     ),
                   ),
                   const Spacer(),
+
+                  // Toggle Agent Mode
+                  Tooltip(
+                    message: widget.workspaceState.settings.useAgentMode
+                        ? 'Agent Mode (MCP Tool Execution Active)'
+                        : 'Simple Chat Mode',
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          widget.workspaceState.settings.useAgentMode ? 'AGENT' : 'CHAT',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: widget.workspaceState.settings.useAgentMode
+                                ? const Color(0xFF4FC3F7)
+                                : const Color(0xFF8E8E8E),
+                          ),
+                        ),
+                        Switch(
+                          value: widget.workspaceState.settings.useAgentMode,
+                          onChanged: (val) {
+                            setState(() {
+                              widget.workspaceState.settings.useAgentMode = val;
+                              widget.workspaceState.applySettings();
+                            });
+                          },
+                          activeThumbColor: const Color(0xFF007ACC),
+                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                      ],
+                    ),
+                  ),
+
                   IconButton(
                     icon: const Icon(Icons.close_rounded, size: 16, color: Color(0xFF8E8E8E)),
                     onPressed: widget.workspaceState.toggleAiPanel,
@@ -205,40 +262,61 @@ class _AiPanelState extends State<AiPanel> {
           ),
           const Divider(height: 1),
 
-          // Chat Message Stream
+          // Stream & Active Agent Operations Body
           Expanded(
-            child: ListView.separated(
+            child: ListView(
               controller: _scrollController,
               padding: const EdgeInsets.all(14),
-              itemCount: messages.length + (widget.workspaceState.engine.isAiThinking ? 1 : 0),
-              separatorBuilder: (_, __) => const SizedBox(height: 14),
-              itemBuilder: (context, index) {
-                if (index == messages.length) {
-                  return _buildThinkingBubble();
-                }
+              children: [
+                for (int i = 0; i < messages.length; i++) ...[
+                  _buildMessageBubble(
+                    isUser: messages[i]['isUser'] == true,
+                    content: messages[i]['content']?.toString() ?? '',
+                  ),
+                  const SizedBox(height: 14),
+                ],
 
-                final msg = messages[index];
-                final isUser = msg['isUser'] as bool;
-                final content = msg['content'] as String;
+                // Live Agent Tools & Steps View
+                if (agentState.isAgentRunning || agentState.toolCalls.isNotEmpty) ...[
+                  _buildAgentExecutionCard(agentState),
+                  const SizedBox(height: 14),
+                ],
 
-                return _buildMessageBubble(
-                  isUser: isUser,
-                  content: content,
-                );
-              },
+                // Live Approval Request Card
+                if (agentState.pendingApproval != null) ...[
+                  _buildApprovalCard(agentState.pendingApproval!),
+                  const SizedBox(height: 14),
+                ],
+
+                // Live Diff Proposal View
+                if (agentState.pendingDiff != null) ...[
+                  DiffViewCard(
+                    filePath: agentState.pendingDiff!['path'] as String? ?? '',
+                    diffText: agentState.pendingDiff!['diff'] as String? ?? '',
+                    onAccept: () => widget.workspaceState.engine.respondToDiff(true),
+                    onReject: () => widget.workspaceState.engine.respondToDiff(false),
+                  ),
+                  const SizedBox(height: 14),
+                ],
+
+                // General thinking indicator
+                if (widget.workspaceState.engine.isAiThinking && !agentState.isAgentRunning)
+                  _buildThinkingBubble(),
+              ],
             ),
           ),
 
           if (_statusText.isNotEmpty)
             Container(
               width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               color: const Color(0xFF1E1E1E),
               child: Text(
                 _statusText,
                 style: const TextStyle(fontSize: 11.5, color: Color(0xFF9D9D9D)),
               ),
             ),
+
           if (_attachments.isNotEmpty)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
@@ -300,9 +378,11 @@ class _AiPanelState extends State<AiPanel> {
                         maxLines: 4,
                         minLines: 1,
                         style: const TextStyle(fontSize: 13, color: Colors.white),
-                        decoration: const InputDecoration(
-                          hintText: 'Ask AI Agent (context auto-included)...',
-                          hintStyle: TextStyle(color: Color(0xFF8E8E8E), fontSize: 12),
+                        decoration: InputDecoration(
+                          hintText: widget.workspaceState.settings.useAgentMode
+                              ? 'Assign Atlas Agent a task...'
+                              : 'Ask AI Agent...',
+                          hintStyle: const TextStyle(color: Color(0xFF8E8E8E), fontSize: 12),
                           border: InputBorder.none,
                           isDense: true,
                           contentPadding: EdgeInsets.zero,
@@ -312,16 +392,27 @@ class _AiPanelState extends State<AiPanel> {
                     ),
                   ),
                   const SizedBox(width: 6),
-                  InkWell(
-                    onTap: () {
-                      _sendPrompt(_inputController.text);
-                      _inputFocusNode.requestFocus();
-                    },
-                    child: const Padding(
-                      padding: EdgeInsets.all(4.0),
-                      child: Icon(Icons.send_rounded, size: 16, color: Color(0xFF007ACC)),
+
+                  if (agentState.isAgentRunning)
+                    IconButton(
+                      tooltip: 'Stop Agent Execution',
+                      onPressed: () => widget.workspaceState.engine.cancelAgent(),
+                      icon: const Icon(Icons.stop_circle_outlined, size: 20, color: Color(0xFFF85149)),
+                      splashRadius: 16,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                    )
+                  else
+                    InkWell(
+                      onTap: () {
+                        _sendPrompt(_inputController.text);
+                        _inputFocusNode.requestFocus();
+                      },
+                      child: const Padding(
+                        padding: EdgeInsets.all(4.0),
+                        child: Icon(Icons.send_rounded, size: 16, color: Color(0xFF007ACC)),
+                      ),
                     ),
-                  ),
                 ],
               ),
             ),
@@ -329,6 +420,170 @@ class _AiPanelState extends State<AiPanel> {
         ],
       ),
     );
+  }
+
+  Widget _buildAgentExecutionCard(AgentState agentState) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1E1E1E),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: const Color(0xFF007ACC)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              if (agentState.isAgentRunning)
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Color(0xFF4FC3F7)),
+                  ),
+                )
+              else
+                const Icon(Icons.check_circle_outline, size: 16, color: Color(0xFF7EE787)),
+              const SizedBox(width: 8),
+              Text(
+                agentState.isAgentRunning ? 'Atlas Agent Execution' : 'Agent Steps Executed',
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+              ),
+              const Spacer(),
+              Text(
+                'Step ${agentState.currentIteration}',
+                style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E8E)),
+              ),
+            ],
+          ),
+          if (agentState.currentStatus.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              agentState.currentStatus,
+              style: const TextStyle(fontSize: 11.5, color: Color(0xFFCCCCCC)),
+            ),
+          ],
+          if (agentState.toolCalls.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            const Divider(height: 1, color: Color(0xFF333333)),
+            const SizedBox(height: 8),
+            for (final tool in agentState.toolCalls) ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  children: [
+                    Icon(
+                      tool['status'] == 'completed'
+                          ? Icons.check
+                          : tool['status'] == 'denied'
+                              ? Icons.close
+                              : Icons.sync,
+                      size: 13,
+                      color: tool['status'] == 'completed'
+                          ? const Color(0xFF7EE787)
+                          : tool['status'] == 'denied'
+                              ? const Color(0xFFF85149)
+                              : const Color(0xFF4FC3F7),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      tool['toolName'] as String? ?? 'tool',
+                      style: const TextStyle(
+                        fontFamily: 'Consolas',
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF4FC3F7),
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        _formatToolArgs(tool['args']),
+                        style: const TextStyle(fontSize: 10.5, color: Color(0xFF8E8E8E)),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildApprovalCard(Map<String, dynamic> approvalInfo) {
+    final requestId = approvalInfo['requestId'] as String? ?? '';
+    final toolName = approvalInfo['toolName'] as String? ?? 'Operation';
+    final category = approvalInfo['category'] as String? ?? 'EXECUTE';
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: const Color(0xFF2D2013),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: const Color(0xFFD19A66)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.shield_outlined, size: 16, color: Color(0xFFD19A66)),
+              const SizedBox(width: 8),
+              Text(
+                'Permission Required ($category)',
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFFD19A66)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Atlas wants permission to execute tool: "$toolName"',
+            style: const TextStyle(fontSize: 12, color: Colors.white),
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              OutlinedButton(
+                onPressed: () => widget.workspaceState.engine.respondToApproval(requestId, false),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: const Color(0xFFF85149),
+                  side: const BorderSide(color: Color(0xFFF85149)),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  minimumSize: Size.zero,
+                ),
+                child: const Text('Deny', style: TextStyle(fontSize: 11)),
+              ),
+              const SizedBox(width: 8),
+              ElevatedButton(
+                onPressed: () => widget.workspaceState.engine.respondToApproval(requestId, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF238636),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  minimumSize: Size.zero,
+                ),
+                child: const Text('Allow Action', style: TextStyle(fontSize: 11)),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatToolArgs(dynamic args) {
+    if (args is Map) {
+      if (args.containsKey('path')) return args['path'].toString();
+      if (args.containsKey('query')) return 'query: "${args['query']}"';
+      if (args.containsKey('command')) return 'cmd: "${args['command']}"';
+    }
+    return args ? args.toString() : '';
   }
 
   Widget _buildMessageBubble({required bool isUser, required String content}) {
