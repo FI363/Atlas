@@ -3,11 +3,9 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
-    "engine": "npm --prefix backend start",
-    "dev": "concurrently -k \"npm run engine\" \"flutter run -d web-server --web-hostname localhost --web-port 8081 --dart-define=ATLAS_ENGINE_TOKEN=dev-token\"",
-    "ipad": "concurrently -k \"npm run engine\" \"flutter run -d web-server --web-hostname 0.0.0.0 --web-port 8081 --dart-define=ATLAS_ENGINE_TOKEN=dev-token\""
-  },
-  "devDependencies": {
-    "concurrently": "^10.0.4"
+    "engine": "node backend/server.js",
+    "dev": "node scripts/start-atlas.js dev",
+    "ipad": "node scripts/start-atlas.js ipad",
+    "test:engine": "node backend/test/security.test.js && node backend/test/atlas_agent.test.js && node backend/test/conversation_session.test.js"
   }
 }

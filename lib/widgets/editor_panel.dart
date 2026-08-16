@@ -16,11 +16,19 @@ class EditorPanel extends StatefulWidget {
 
 class _EditorPanelState extends State<EditorPanel> {
   final _controller = TextEditingController();
+  final _editorFocusNode = FocusNode();
+  final _findController = TextEditingController();
+  final _replaceController = TextEditingController();
   String? _controllerFile;
+  bool _showFind = false;
+  bool _showReplace = false;
 
   @override
   void dispose() {
     _controller.dispose();
+    _editorFocusNode.dispose();
+    _findController.dispose();
+    _replaceController.dispose();
     super.dispose();
   }
 
@@ -39,6 +47,11 @@ class _EditorPanelState extends State<EditorPanel> {
         SingleActivator(LogicalKeyboardKey.keyS, meta: true): _SaveIntent(),
         SingleActivator(LogicalKeyboardKey.keyS, control: true, shift: true): _SaveAllIntent(),
         SingleActivator(LogicalKeyboardKey.keyS, meta: true, shift: true): _SaveAllIntent(),
+        SingleActivator(LogicalKeyboardKey.keyF, control: true): _FindIntent(),
+        SingleActivator(LogicalKeyboardKey.keyF, meta: true): _FindIntent(),
+        SingleActivator(LogicalKeyboardKey.keyH, control: true): _ReplaceIntent(),
+        SingleActivator(LogicalKeyboardKey.keyH, meta: true): _ReplaceIntent(),
+        SingleActivator(LogicalKeyboardKey.escape): _DismissFindIntent(),
       },
       child: Actions(
         actions: {
@@ -54,6 +67,21 @@ class _EditorPanelState extends State<EditorPanel> {
               return null;
             },
           ),
+          _FindIntent: CallbackAction<_FindIntent>(onInvoke: (_) {
+            _openFind();
+            return null;
+          }),
+          _ReplaceIntent: CallbackAction<_ReplaceIntent>(onInvoke: (_) {
+            _openFind(replace: true);
+            return null;
+          }),
+          _DismissFindIntent: CallbackAction<_DismissFindIntent>(onInvoke: (_) {
+            if (_showFind) {
+              setState(() => _showFind = false);
+              _editorFocusNode.requestFocus();
+            }
+            return null;
+          }),
         },
         child: Focus(
           autofocus: true,
@@ -68,11 +96,28 @@ class _EditorPanelState extends State<EditorPanel> {
                 ),
                 if (widget.workspaceState.settings.breadcrumbs && activeFile != null)
                   _BreadcrumbsBar(filePath: activeFile),
+                if (_showFind)
+                  _FindReplaceBar(
+                    findController: _findController,
+                    replaceController: _replaceController,
+                    showReplace: _showReplace,
+                    matchCount: _matchCount,
+                    onQueryChanged: () => setState(() {}),
+                    onFindNext: _findNext,
+                    onFindPrevious: () => _findNext(backwards: true),
+                    onReplace: _replaceCurrent,
+                    onReplaceAll: _replaceAll,
+                    onClose: () {
+                      setState(() => _showFind = false);
+                      _editorFocusNode.requestFocus();
+                    },
+                  ),
                 Expanded(
                   child: content == null
                       ? const Center(child: CircularProgressIndicator(strokeWidth: 2))
                       : _CodeEditor(
                           controller: _controller,
+                          focusNode: _editorFocusNode,
                           settings: widget.workspaceState.settings,
                           onChanged: (value) => widget.workspaceState.updateDraft(activeFile!, value),
                         ),
@@ -104,6 +149,76 @@ class _EditorPanelState extends State<EditorPanel> {
   void _save(String filePath) {
     final content = widget.workspaceState.contentForFile(filePath);
     if (content != null) widget.workspaceState.saveFile(filePath, content);
+  }
+
+  int get _matchCount {
+    final query = _findController.text;
+    if (query.isEmpty) return 0;
+    return RegExp(RegExp.escape(query)).allMatches(_controller.text).length;
+  }
+
+  void _openFind({bool replace = false}) {
+    setState(() {
+      _showFind = true;
+      _showReplace = replace;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _findController.selection = TextSelection(baseOffset: 0, extentOffset: _findController.text.length);
+    });
+  }
+
+  void _findNext({bool backwards = false}) {
+    final query = _findController.text;
+    if (query.isEmpty) return;
+    final text = _controller.text;
+    final selection = _controller.selection;
+    final start = backwards ? selection.start - 1 : selection.end;
+    final index = backwards
+        ? text.lastIndexOf(query, start < 0 ? text.length : start)
+        : text.indexOf(query, start >= text.length ? 0 : start);
+    final resolvedIndex = index == -1
+        ? (backwards ? text.lastIndexOf(query) : text.indexOf(query))
+        : index;
+    if (resolvedIndex == -1) return;
+    _controller.selection = TextSelection(
+      baseOffset: resolvedIndex,
+      extentOffset: resolvedIndex + query.length,
+    );
+    _editorFocusNode.requestFocus();
+    setState(() {});
+  }
+
+  void _replaceCurrent() {
+    final file = _controllerFile;
+    final query = _findController.text;
+    if (file == null || query.isEmpty) return;
+    final selection = _controller.selection;
+    if (selection.isValid && selection.start >= 0 && selection.end >= selection.start &&
+        _controller.text.substring(selection.start, selection.end) == query) {
+      final replacement = _replaceController.text;
+      final nextText = _controller.text.replaceRange(selection.start, selection.end, replacement);
+      final cursor = selection.start + replacement.length;
+      _controller.value = TextEditingValue(
+        text: nextText,
+        selection: TextSelection.collapsed(offset: cursor),
+      );
+      widget.workspaceState.updateDraft(file, nextText);
+    }
+    _findNext();
+  }
+
+  void _replaceAll() {
+    final file = _controllerFile;
+    final query = _findController.text;
+    if (file == null || query.isEmpty) return;
+    final nextText = _controller.text.replaceAll(query, _replaceController.text);
+    if (nextText == _controller.text) return;
+    _controller.value = TextEditingValue(
+      text: nextText,
+      selection: const TextSelection.collapsed(offset: 0),
+    );
+    widget.workspaceState.updateDraft(file, nextText);
+    setState(() {});
   }
 
   Future<void> _requestClose(String filePath) async {
@@ -149,6 +264,10 @@ class _SaveIntent extends Intent {
 class _SaveAllIntent extends Intent {
   const _SaveAllIntent();
 }
+
+class _FindIntent extends Intent { const _FindIntent(); }
+class _ReplaceIntent extends Intent { const _ReplaceIntent(); }
+class _DismissFindIntent extends Intent { const _DismissFindIntent(); }
 
 enum _CloseChoice { cancel, discard, save }
 
@@ -325,11 +444,13 @@ class _BreadcrumbsBar extends StatelessWidget {
 class _CodeEditor extends StatelessWidget {
   const _CodeEditor({
     required this.controller,
+    required this.focusNode,
     required this.settings,
     required this.onChanged,
   });
 
   final TextEditingController controller;
+  final FocusNode focusNode;
   final dynamic settings;
   final ValueChanged<String> onChanged;
 
@@ -338,6 +459,7 @@ class _CodeEditor extends StatelessWidget {
         padding: const EdgeInsets.all(16),
         child: TextField(
           controller: controller,
+          focusNode: focusNode,
           onChanged: onChanged,
           expands: true,
           maxLines: null,
@@ -351,6 +473,74 @@ class _CodeEditor extends StatelessWidget {
             height: 1.45,
           ),
           decoration: const InputDecoration(border: InputBorder.none, contentPadding: EdgeInsets.zero),
+        ),
+      );
+}
+
+class _FindReplaceBar extends StatelessWidget {
+  const _FindReplaceBar({
+    required this.findController,
+    required this.replaceController,
+    required this.showReplace,
+    required this.matchCount,
+    required this.onQueryChanged,
+    required this.onFindNext,
+    required this.onFindPrevious,
+    required this.onReplace,
+    required this.onReplaceAll,
+    required this.onClose,
+  });
+
+  final TextEditingController findController;
+  final TextEditingController replaceController;
+  final bool showReplace;
+  final int matchCount;
+  final VoidCallback onQueryChanged;
+  final VoidCallback onFindNext;
+  final VoidCallback onFindPrevious;
+  final VoidCallback onReplace;
+  final VoidCallback onReplaceAll;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        color: const Color(0xFF252526),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        child: Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 6,
+          runSpacing: 6,
+          children: [
+            _findField(findController, 'Find', onFindNext, onQueryChanged),
+            Text('$matchCount matches', style: const TextStyle(color: Color(0xFF9D9D9D), fontSize: 11)),
+            IconButton(onPressed: onFindPrevious, icon: const Icon(Icons.keyboard_arrow_up), tooltip: 'Previous match'),
+            IconButton(onPressed: onFindNext, icon: const Icon(Icons.keyboard_arrow_down), tooltip: 'Next match'),
+            if (showReplace) ...[
+              _findField(replaceController, 'Replace', onReplace, () {}),
+              TextButton(onPressed: onReplace, child: const Text('Replace')),
+              TextButton(onPressed: onReplaceAll, child: const Text('All')),
+            ],
+            IconButton(onPressed: onClose, icon: const Icon(Icons.close_rounded), tooltip: 'Close find'),
+          ],
+        ),
+      );
+
+  Widget _findField(TextEditingController controller, String hint, VoidCallback onSubmitted, VoidCallback onChanged) => SizedBox(
+        width: 180,
+        height: 32,
+        child: TextField(
+          controller: controller,
+          onChanged: (_) => onChanged(),
+          onSubmitted: (_) => onSubmitted(),
+          style: const TextStyle(color: Colors.white, fontSize: 12),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: const TextStyle(color: Color(0xFF8E8E8E), fontSize: 12),
+            filled: true,
+            fillColor: const Color(0xFF3C3C3C),
+            isDense: true,
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(4), borderSide: BorderSide.none),
+          ),
         ),
       );
 }

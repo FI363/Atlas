@@ -282,6 +282,108 @@ function extractToolCallsFromText(text) {
   return toolCalls.length > 0 ? toolCalls : null;
 }
 
+function getLatestUserTurn(conversation) {
+  for (let index = conversation.length - 1; index >= 0; index--) {
+    if (conversation[index].role === 'user') {
+      return { index, message: conversation[index] };
+    }
+  }
+  return { index: -1, message: null };
+}
+
+function wasToolExecutedThisTurn(conversation, userIndex, toolCallId) {
+  return conversation.slice(userIndex + 1).some((message) =>
+    message.role === 'tool' && message.tool_call_id === toolCallId
+  );
+}
+
+function getToolErrorsThisTurn(conversation, userIndex) {
+  return conversation.slice(userIndex + 1)
+    .filter((message) => message.role === 'tool')
+    .map((message) => {
+      try {
+        const result = JSON.parse(message.content || '{}');
+        return typeof result.error === 'string' ? result.error : '';
+      } catch (_) {
+        return '';
+      }
+    })
+    .filter(Boolean);
+}
+
+function builtInToolCall(userIndex, operation, name, args) {
+  return {
+    id: `builtin_${userIndex}_${operation}`,
+    type: 'function',
+    function: { name, arguments: JSON.stringify(args) },
+  };
+}
+
+function extractRequestedCreation(prompt) {
+  const isCreation = /\b(?:create|make)\b/i.test(prompt) && /\b(?:file|folder|directory)\b/i.test(prompt);
+  if (!isCreation) return null;
+
+  const kindMatch = prompt.match(/\b(file|folder|directory)\b/i);
+  const isDirectory = kindMatch && kindMatch[1].toLowerCase() !== 'file';
+  const ignoredNames = new Set(['a', 'an', 'in', 'the', 'my', 'current', 'directory', 'folder', 'file']);
+  const patterns = [
+    /\b(?:file|folder|directory)\s+(?:named|called|at)\s+["']?([A-Za-z0-9_./\\-]+)["']?/i,
+    /\b(?:create|make)\s+(?:a|an)?\s*(?:new\s+)?(?:text\s+)?(?:file|folder|directory)\s+["']?([A-Za-z0-9_./\\-]+)["']?/i,
+  ];
+
+  let requestedPath = '';
+  for (const pattern of patterns) {
+    const match = prompt.match(pattern);
+    const candidate = match?.[1]?.trim();
+    if (candidate && !ignoredNames.has(candidate.toLowerCase())) {
+      requestedPath = candidate;
+      break;
+    }
+  }
+
+  const contentMatch = prompt.match(/\bwith\s+(?:the\s+)?content\s+["']?([\s\S]*?)["']?\s*$/i);
+  return {
+    requestedPath,
+    content: contentMatch?.[1]?.trim() || '',
+    isDirectory,
+  };
+}
+
+function findUnresolvedCreation(conversation, beforeIndex) {
+  for (let index = beforeIndex - 1; index >= 0; index--) {
+    const message = conversation[index];
+    if (message.role !== 'user') continue;
+    const creation = extractRequestedCreation(message.content || '');
+    if (creation && !creation.requestedPath) return creation;
+  }
+  return null;
+}
+
+function findMostRecentEditedPath(conversation, beforeIndex) {
+  for (let index = beforeIndex - 1; index >= 0; index--) {
+    const calls = conversation[index].tool_calls;
+    if (!Array.isArray(calls)) continue;
+    for (let callIndex = calls.length - 1; callIndex >= 0; callIndex--) {
+      const call = calls[callIndex];
+      if (!['create_file', 'write_file'].includes(call?.function?.name)) continue;
+      try {
+        const args = typeof call.function.arguments === 'string'
+          ? JSON.parse(call.function.arguments)
+          : call.function.arguments;
+        if (typeof args?.path === 'string' && args.path) return args.path;
+      } catch (_) {
+        // Ignore malformed historical tool arguments and continue searching.
+      }
+    }
+  }
+  return '';
+}
+
+function extractContentUpdate(prompt) {
+  const match = prompt.match(/\b(?:set|change|update|replace)\b[\s\S]*?\b(?:content|text)\b[\s\S]*?\b(?:to|with)\s+["']?([\s\S]*?)["']?\s*$/i);
+  return match?.[1]?.trim() || '';
+}
+
 function callAiProviderWithTools(settings, conversation, callback) {
   const provider = settings.aiProvider || 'builtIn';
   const tools = settings.tools || [];
@@ -405,88 +507,103 @@ function callAiProviderWithTools(settings, conversation, callback) {
     req.end();
   } else {
     // Built-in offline agent tool orchestration with full file CRUD & MCP support
-    const userMessage = conversation.find(m => m.role === 'user');
+    // Use the current turn, while retaining earlier messages as the source of
+    // clarification context. The old `find` selected the first user message,
+    // so it could never correctly interpret a later follow-up.
+    const { index: userIndex, message: userMessage } = getLatestUserTurn(conversation);
     const promptText = userMessage ? (userMessage.content || '') : '';
     const lowerPrompt = promptText.toLowerCase();
 
-    // Check which tool calls have already been executed in this conversation
-    const executedTools = conversation
-      .filter(m => m.role === 'tool')
-      .map(m => m.tool_call_id);
-
     setTimeout(() => {
       // 1. Creation intent
-      if (lowerPrompt.includes('create') && (lowerPrompt.includes('file') || lowerPrompt.includes('folder') || lowerPrompt.includes('directory'))) {
-        const fileMatch = promptText.match(/(?:create|make)\s+(?:file|folder|directory)?\s*([a-zA-Z0-9_./\\-]+)(?:\s+with\s+content\s+["']?([\s\S]*?)["']?)?/i);
-        const path = fileMatch ? fileMatch[1].trim() : 'new_file.txt';
-        const content = fileMatch && fileMatch[2] ? fileMatch[2].trim() : '';
+      const creation = extractRequestedCreation(promptText);
+      const acceptsDefault = /^(?:anything|whatever|you decide|your choice)(?:\s+you\s+want)?[.!]*$/i.test(promptText.trim());
+      const pendingCreation = acceptsDefault ? findUnresolvedCreation(conversation, userIndex) : null;
+      if (creation || pendingCreation) {
+        const requestedCreation = creation || pendingCreation;
+        const targetPath = requestedCreation.requestedPath || (requestedCreation.isDirectory ? 'atlas-folder' : 'atlas-note.txt');
+        const content = requestedCreation.content || (pendingCreation ? 'Created by Atlas.\n' : '');
+        const createCall = builtInToolCall(userIndex, 'create', content ? 'write_file' : 'create_file',
+          content ? { path: targetPath, content } : { path: targetPath, isDirectory: requestedCreation.isDirectory });
 
-        if (!executedTools.includes('call_create')) {
+        if (!requestedCreation.requestedPath && !acceptsDefault) {
           callback(null, {
-            content: `Creating file "${path}" in workspace...`,
-            toolCalls: [{
-              id: 'call_create',
-              type: 'function',
-              function: {
-                name: content ? 'write_file' : 'create_file',
-                arguments: JSON.stringify(content ? { path, content } : { path }),
-              },
-            }],
+            content: `What would you like to name the ${requestedCreation.isDirectory ? 'folder' : 'file'}, and what should it contain?`,
+            toolCalls: null,
+          });
+          return;
+        }
+
+        if (!wasToolExecutedThisTurn(conversation, userIndex, createCall.id)) {
+          callback(null, {
+            content: `Creating ${requestedCreation.isDirectory ? 'folder' : 'file'} "${targetPath}" in workspace...`,
+            toolCalls: [createCall],
           });
           return;
         }
       }
 
-      // 2. Deletion intent
+      // 2. A follow-up can modify the file created in a previous turn.
+      const updatedContent = extractContentUpdate(promptText);
+      const previousPath = updatedContent ? findMostRecentEditedPath(conversation, userIndex) : '';
+      if (updatedContent && previousPath) {
+        const writeCall = builtInToolCall(userIndex, 'write', 'write_file', { path: previousPath, content: updatedContent });
+        if (!wasToolExecutedThisTurn(conversation, userIndex, writeCall.id)) {
+          callback(null, {
+            content: `Updating "${previousPath}"...`,
+            toolCalls: [writeCall],
+          });
+          return;
+        }
+      }
+
+      // 3. Deletion intent
       if (lowerPrompt.includes('delete') || lowerPrompt.includes('remove')) {
         const fileMatch = promptText.match(/(?:delete|remove)\s+(?:file|folder|directory)?\s*([a-zA-Z0-9_./\\-]+)/i);
         const path = fileMatch ? fileMatch[1].trim() : '';
+        const deleteCall = builtInToolCall(userIndex, 'delete', 'delete_file', { path });
 
-        if (path && !executedTools.includes('call_delete')) {
+        if (path && !wasToolExecutedThisTurn(conversation, userIndex, deleteCall.id)) {
           callback(null, {
             content: `Deleting "${path}" from workspace...`,
-            toolCalls: [{
-              id: 'call_delete',
-              type: 'function',
-              function: {
-                name: 'delete_file',
-                arguments: JSON.stringify({ path }),
-              },
-            }],
+            toolCalls: [deleteCall],
           });
           return;
         }
       }
 
-      // 3. Search / Find intent
-      if ((lowerPrompt.includes('find') || lowerPrompt.includes('search') || lowerPrompt.includes('where')) && !executedTools.includes('call_search')) {
+      // 4. Search / Find intent
+      const searchCall = builtInToolCall(userIndex, 'search', 'search_code', { query: 'atlas' });
+      if ((lowerPrompt.includes('find') || lowerPrompt.includes('search') || lowerPrompt.includes('where')) && !wasToolExecutedThisTurn(conversation, userIndex, searchCall.id)) {
         const queryMatch = lowerPrompt.match(/(?:find|search|where)\s+([a-zA-Z0-9_-]+)/);
         const query = queryMatch ? queryMatch[1] : 'atlas';
+        searchCall.function.arguments = JSON.stringify({ query });
         callback(null, {
           content: `Searching codebase for "${query}"...`,
-          toolCalls: [{
-            id: 'call_search',
-            type: 'function',
-            function: { name: 'search_code', arguments: JSON.stringify({ query }) },
-          }],
+          toolCalls: [searchCall],
         });
         return;
       }
 
-      // 4. Structure intent
-      if (!executedTools.includes('call_struct')) {
+      // 5. Structure intent
+      const structureCall = builtInToolCall(userIndex, 'struct', 'get_project_info', {});
+      if (!wasToolExecutedThisTurn(conversation, userIndex, structureCall.id)) {
         callback(null, {
           content: 'Inspecting project configuration...',
-          toolCalls: [{
-            id: 'call_struct',
-            type: 'function',
-            function: { name: 'get_project_info', arguments: '{}' },
-          }],
+          toolCalls: [structureCall],
         });
         return;
       }
 
       // Default completion
+      const toolErrors = getToolErrorsThisTurn(conversation, userIndex);
+      if (toolErrors.length > 0) {
+        callback(null, {
+          content: `### ⚠️ Atlas Built-In Agent Task Incomplete\n\nA tool failed: ${toolErrors[0]}\n\nYour conversation and tool results were preserved. Update the request or retry the operation.`,
+          toolCalls: null,
+        });
+        return;
+      }
       callback(null, {
         content: `### 🤖 Atlas Built-In Agent Task Complete\n\nSuccessfully executed requested operations on your workspace.\n\n*Note: To connect autonomous open-source models on your GPU, select **Ollama** in Atlas Settings.*`,
         toolCalls: null,

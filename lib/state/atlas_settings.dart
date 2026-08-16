@@ -44,7 +44,7 @@ class AtlasSettings {
       '4. Keep explanations clear, professional, and concise.';
 
   // ── Engine ────────────────────────────────────────────────────────────────
-  String engineToken = 'dev-token';
+  String engineToken = '';
   String engineUrl = 'ws://localhost:8080';
 
   // ── GitHub Integration ───────────────────────────────────────────────────

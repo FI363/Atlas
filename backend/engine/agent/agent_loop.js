@@ -2,7 +2,7 @@ const { buildAgentSystemPrompt } = require('./context_builder');
 const { generateUnifiedDiff } = require('./diff_engine');
 
 class AgentLoop {
-  constructor({ workspaceRoot, permissionManager, toolRegistry, callbacks, settings = {} }) {
+  constructor({ workspaceRoot, permissionManager, toolRegistry, callbacks, settings = {}, conversation }) {
     this.workspaceRoot = workspaceRoot;
     this.permissionManager = permissionManager;
     this.toolRegistry = toolRegistry;
@@ -10,7 +10,9 @@ class AgentLoop {
     this.settings = settings;
     this.maxIterations = settings.agentMaxIterations || 25;
     this.cancelled = false;
-    this.conversation = [];
+    // A transcript belongs to an Atlas conversation session, not to one model
+    // run. Keeping the reference lets a new AgentLoop continue prior turns.
+    this.conversation = Array.isArray(conversation) ? conversation : [];
   }
 
   cancel() {
@@ -27,10 +29,16 @@ class AgentLoop {
     this.cancelled = false;
     const systemPrompt = buildAgentSystemPrompt(ideContext, this.settings);
 
-    this.conversation = [
-      { role: 'system', content: systemPrompt },
-      { role: 'user', content: prompt }
-    ];
+    if (this.conversation.length === 0) {
+      this.conversation.push({ role: 'system', content: systemPrompt });
+    } else if (this.conversation[0].role === 'system') {
+      // Keep the transcript but refresh volatile IDE context (active file,
+      // open tabs, cursor) for the next model call.
+      this.conversation[0] = { role: 'system', content: systemPrompt };
+    } else {
+      this.conversation.unshift({ role: 'system', content: systemPrompt });
+    }
+    this.conversation.push({ role: 'user', content: prompt });
 
     let iteration = 0;
 
@@ -51,10 +59,12 @@ class AgentLoop {
       if (this.cancelled) break;
 
       if (!response) {
-        if (this.callbacks.onError) {
-          this.callbacks.onError('Model returned an empty response.');
+        const finalAnswer = 'The AI provider returned an empty response. You can retry without losing this conversation.';
+        this.conversation.push({ role: 'assistant', content: finalAnswer });
+        if (this.callbacks.onComplete) {
+          this.callbacks.onComplete({ content: finalAnswer, iterations: iteration });
         }
-        break;
+        return { content: finalAnswer, iterations: iteration };
       }
 
       // Check if model returned tool calls or text response

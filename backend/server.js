@@ -13,23 +13,50 @@ const aiProvidersModule = require('./engine/ai_providers');
 const { PermissionManager } = require('./engine/permissions');
 const { initializeMcpTools } = require('./engine/mcp/init');
 const { AgentLoop } = require('./engine/agent/agent_loop');
+const { ConversationSessionStore, isValidConversationSessionId } = require('./engine/agent/conversation_session');
+const { isLoopbackHost, validateEngineConfig } = require('./engine/security');
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8080;
-const ENGINE_TOKEN = process.env.ATLAS_ENGINE_TOKEN || 'dev-token';
+const { host: ENGINE_HOST, token: ENGINE_TOKEN } = validateEngineConfig({
+  host: process.env.ATLAS_ENGINE_HOST || '127.0.0.1',
+  token: process.env.ATLAS_ENGINE_TOKEN,
+});
 
 // Initialize MCP tools globally
 const toolRegistry = initializeMcpTools();
+const conversationSessions = new ConversationSessionStore();
 
 // Active connection state
 function handleConnection(ws) {
   let authenticated = false;
   let activeProc = null;
+  let terminalSession = null;
   let activeAgentLoop = null;
+  let activeConversationSession = null;
   let pendingDiffResolver = null;
+  // Old clients do not send a session id. They still retain context for this
+  // WebSocket connection, while current clients retain it across reconnects.
+  const connectionSessionId = require('crypto').randomUUID();
 
   let clientSettings = { aiProvider: 'builtIn', ...settingsModule.loadPersistedSettings() };
   let workspaceRoot = workspaceModule.loadPersistedWorkspaceRoot();
   const permissionManager = new PermissionManager(clientSettings.agentPermissionPolicy || 'approve_write');
+
+  const startTerminal = (options = {}) => {
+    if (terminalSession) return terminalSession;
+    terminalSession = terminalModule.createTerminal({
+      cwd: workspaceRoot,
+      cols: options.cols,
+      rows: options.rows,
+      onData: (content) => ws.send(JSON.stringify({ type: 'terminal_data', content })),
+      onExit: ({ exitCode, signal }) => {
+        terminalSession = null;
+        ws.send(JSON.stringify({ type: 'terminal_exit', exitCode, signal }));
+      },
+    });
+    ws.send(JSON.stringify({ type: 'terminal_ready' }));
+    return terminalSession;
+  };
 
   ws.on('message', (raw) => {
     let data;
@@ -138,13 +165,22 @@ function handleConnection(ws) {
       // ── Workspace & File pickers ──────────────────────────────────────────
       case 'open_folder': {
         const requestedPath = typeof data.path === 'string' ? data.path.trim() : '';
-        const setWorkspace = (folder) => {
+        const setWorkspace = (folder, { trust = false } = {}) => {
           if (!folder || !path.isAbsolute(folder) || !require('fs').existsSync(folder) || !require('fs').statSync(folder).isDirectory()) {
             ws.send(JSON.stringify({ type: 'error', content: 'Please select an existing folder.\n' }));
             return;
           }
+          if (!trust && !workspaceModule.isTrustedWorkspace(folder)) {
+            ws.send(JSON.stringify({
+              type: 'error',
+              content: 'Workspace is not approved on this engine. Select it with Open Folder on the engine machine first.\n',
+            }));
+            return;
+          }
           workspaceRoot = path.resolve(folder);
-          workspaceModule.persistWorkspaceRoot(workspaceRoot);
+          workspaceModule.persistWorkspaceRoot(workspaceRoot, { trust });
+          terminalModule.closeTerminal(terminalSession);
+          terminalSession = null;
           ws.send(JSON.stringify({
             type: 'workspace_opened',
             projectName: path.basename(workspaceRoot),
@@ -155,7 +191,7 @@ function handleConnection(ws) {
         if (requestedPath) setWorkspace(requestedPath);
         else workspaceModule.selectFolder((err, folder) => {
           if (err || !folder) return;
-          setWorkspace(folder);
+          setWorkspace(folder, { trust: true });
         });
         break;
       }
@@ -188,35 +224,46 @@ function handleConnection(ws) {
       }
 
       // ── Terminal Execution ────────────────────────────────────────────────
+      case 'terminal_open': {
+        startTerminal(data);
+        break;
+      }
+
+      case 'terminal_input': {
+        const input = typeof data.data === 'string' ? data.data : '';
+        if (input) startTerminal().write(input);
+        break;
+      }
+
+      case 'terminal_resize': {
+        if (terminalSession) {
+          terminalSession.resize(
+            Math.max(20, Number(data.cols) || 100),
+            Math.max(5, Number(data.rows) || 30),
+          );
+        }
+        break;
+      }
+
+      case 'terminal_close': {
+        terminalModule.closeTerminal(terminalSession);
+        terminalSession = null;
+        break;
+      }
+
       case 'cmd': {
         const command = data.command;
         console.log(`Exec: ${command}`);
-
-        if (activeProc) {
-          terminalModule.killProcess(activeProc);
-        }
-
-        activeProc = terminalModule.executeCommand(command, workspaceRoot, {
-          onStdout: (text) => ws.send(JSON.stringify({ type: 'output', content: text })),
-          onStderr: (text) => ws.send(JSON.stringify({ type: 'error', content: text })),
-          onClose: (code) => {
-            activeProc = null;
-            ws.send(JSON.stringify({ type: 'exit', code }));
-          },
-          onError: (err) => {
-            activeProc = null;
-            ws.send(JSON.stringify({ type: 'error', content: err.toString() }));
-          },
-        });
+        startTerminal().write(`${command}\r`);
         break;
       }
 
       case 'kill_cmd': {
-        if (activeProc) {
-          console.log('Terminating active process...');
+        if (terminalSession) {
+          terminalSession.write('\u0003');
+        } else if (activeProc) {
           terminalModule.killProcess(activeProc);
           activeProc = null;
-          ws.send(JSON.stringify({ type: 'output', content: '\n^C [Process terminated by user]\n' }));
         }
         break;
       }
@@ -245,18 +292,35 @@ function handleConnection(ws) {
         const prompt = data.prompt || '';
         const ideContext = data.ideContext || {};
         const settings = data.settings || clientSettings;
+        const sessionId = isValidConversationSessionId(data.sessionId)
+          ? data.sessionId
+          : connectionSessionId;
+        const conversationSession = conversationSessions.getOrCreate(sessionId, workspaceRoot);
 
         console.log(`Starting Atlas Agent Loop: "${prompt.substring(0, 50)}..."`);
 
         if (activeAgentLoop) {
-          activeAgentLoop.cancel();
+          ws.send(JSON.stringify({
+            type: 'error',
+            content: 'An agent task is already running in this conversation. Wait for it to finish or cancel it before sending another message.\n',
+          }));
+          break;
         }
+        if (!conversationSession.startRun()) {
+          ws.send(JSON.stringify({
+            type: 'error',
+            content: 'This conversation is already running on another connection. Wait for it to finish before sending another message.\n',
+          }));
+          break;
+        }
+        activeConversationSession = conversationSession;
 
         activeAgentLoop = new AgentLoop({
           workspaceRoot,
           permissionManager,
           toolRegistry,
           settings,
+          conversation: conversationSession.conversation,
           callbacks: {
             onProgress: (status) => {
               ws.send(JSON.stringify({ type: 'agent_progress', status }));
@@ -299,7 +363,13 @@ function handleConnection(ws) {
               });
             },
             onComplete: (result) => {
-              activeAgentLoop = null;
+              // Save the conversation history back to the session for continuity
+              conversationSession.conversation = activeAgentLoop.conversation;
+              conversationSession.finishRun();
+              if (activeConversationSession === conversationSession) {
+                activeAgentLoop = null;
+                activeConversationSession = null;
+              }
               ws.send(JSON.stringify({
                 type: 'agent_response',
                 content: result.content,
@@ -307,13 +377,26 @@ function handleConnection(ws) {
               }));
             },
             onError: (err) => {
-              activeAgentLoop = null;
+              conversationSession.finishRun();
+              if (activeConversationSession === conversationSession) {
+                activeAgentLoop = null;
+                activeConversationSession = null;
+              }
               ws.send(JSON.stringify({ type: 'error', content: `Agent error: ${err}` }));
             },
           },
         });
 
-        activeAgentLoop.run(prompt, ideContext);
+        activeAgentLoop.run(prompt, ideContext).catch((error) => {
+          const message = `Agent failed: ${error.message}. Your conversation was preserved; you can retry.`;
+          conversationSession.conversation.push({ role: 'assistant', content: message });
+          conversationSession.finishRun();
+          if (activeConversationSession === conversationSession) {
+            activeAgentLoop = null;
+            activeConversationSession = null;
+          }
+          ws.send(JSON.stringify({ type: 'agent_response', content: message, iterations: 0 }));
+        });
         break;
       }
 
@@ -321,6 +404,8 @@ function handleConnection(ws) {
         if (activeAgentLoop) {
           activeAgentLoop.cancel();
           activeAgentLoop = null;
+          activeConversationSession?.finishRun();
+          activeConversationSession = null;
           ws.send(JSON.stringify({ type: 'agent_progress', status: 'Agent cancelled by user.' }));
         }
         break;
@@ -361,6 +446,11 @@ function handleConnection(ws) {
 
       case 'git_status': {
         gitModule.sendGitStatus(ws, workspaceRoot);
+        break;
+      }
+
+      case 'git_diff': {
+        gitModule.sendGitDiff(ws, workspaceRoot, data.path, !!data.staged);
         break;
       }
 
@@ -426,27 +516,31 @@ function handleConnection(ws) {
   });
 
   ws.on('close', () => {
+    terminalModule.closeTerminal(terminalSession);
     if (activeProc) {
       terminalModule.killProcess(activeProc);
     }
     if (activeAgentLoop) {
       activeAgentLoop.cancel();
     }
+    activeConversationSession?.finishRun();
     console.log('Client disconnected.');
   });
 }
 
 // ── Start Server ────────────────────────────────────────────────────────────
 
-const wss = new WebSocket.Server({ port: PORT, host: '0.0.0.0' });
+const wss = new WebSocket.Server({ port: PORT, host: ENGINE_HOST });
 
 wss.on('listening', () => {
-  console.log(`\n  Atlas Engine listening on port ${PORT}`);
-  const nets = os.networkInterfaces();
-  for (const name of Object.keys(nets)) {
-    for (const net of nets[name]) {
-      if (net.family === 'IPv4' && !net.internal) {
-        console.log(`  LAN:  ws://${net.address}:${PORT}`);
+  console.log(`\n  Atlas Engine listening on ${ENGINE_HOST}:${PORT}`);
+  if (!isLoopbackHost(ENGINE_HOST)) {
+    const nets = os.networkInterfaces();
+    for (const name of Object.keys(nets)) {
+      for (const net of nets[name]) {
+        if (net.family === 'IPv4' && !net.internal) {
+          console.log(`  LAN:  ws://${net.address}:${PORT}`);
+        }
       }
     }
   }

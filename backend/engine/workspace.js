@@ -6,19 +6,62 @@ const { execFile } = require('child_process');
 const WORKSPACE_STATE_FILE = path.join(os.homedir(), '.atlas', 'workspace.json');
 const DEFAULT_PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 
-function loadPersistedWorkspaceRoot() {
-  try {
-    const saved = JSON.parse(fs.readFileSync(WORKSPACE_STATE_FILE, 'utf-8'));
-    const candidate = typeof saved.path === 'string' ? path.resolve(saved.path) : '';
-    if (candidate && fs.existsSync(candidate) && fs.statSync(candidate).isDirectory()) return candidate;
-  } catch { }
-  return DEFAULT_PROJECT_ROOT;
+function isExistingDirectory(candidate) {
+  return !!candidate && fs.existsSync(candidate) && fs.statSync(candidate).isDirectory();
 }
 
-function persistWorkspaceRoot(workspaceRoot) {
+function loadWorkspaceState() {
+  let saved = {};
+  try {
+    saved = JSON.parse(fs.readFileSync(WORKSPACE_STATE_FILE, 'utf-8'));
+  } catch { }
+
+  const legacyPath = typeof saved.path === 'string' ? path.resolve(saved.path) : '';
+  const trustedRoots = Array.isArray(saved.trustedRoots)
+    ? saved.trustedRoots.filter((entry) => typeof entry === 'string').map((entry) => path.resolve(entry))
+    : [];
+
+  // Existing single-workspace settings are migrated without locking a current
+  // user out of their own established Atlas workspace.
+  if (legacyPath && isExistingDirectory(legacyPath) && !trustedRoots.includes(legacyPath)) {
+    trustedRoots.push(legacyPath);
+  }
+  if (!trustedRoots.includes(DEFAULT_PROJECT_ROOT)) trustedRoots.push(DEFAULT_PROJECT_ROOT);
+
+  const recentRoots = Array.isArray(saved.recentRoots)
+    ? saved.recentRoots.filter((entry) => typeof entry === 'string').map((entry) => path.resolve(entry))
+    : [];
+  const currentRoot = isExistingDirectory(legacyPath) && trustedRoots.includes(legacyPath)
+    ? legacyPath
+    : DEFAULT_PROJECT_ROOT;
+
+  return { currentRoot, trustedRoots, recentRoots };
+}
+
+function loadPersistedWorkspaceRoot() {
+  return loadWorkspaceState().currentRoot;
+}
+
+function isTrustedWorkspace(workspaceRoot) {
+  const candidate = path.resolve(workspaceRoot);
+  return loadWorkspaceState().trustedRoots.includes(candidate);
+}
+
+function persistWorkspaceRoot(workspaceRoot, { trust = false } = {}) {
   try {
     fs.mkdirSync(path.dirname(WORKSPACE_STATE_FILE), { recursive: true });
-    fs.writeFileSync(WORKSPACE_STATE_FILE, JSON.stringify({ path: workspaceRoot }, null, 2), 'utf-8');
+    const resolvedRoot = path.resolve(workspaceRoot);
+    const state = loadWorkspaceState();
+    const trustedRoots = [...state.trustedRoots];
+    if (trust && !trustedRoots.includes(resolvedRoot)) trustedRoots.push(resolvedRoot);
+    const recentRoots = [resolvedRoot, ...state.recentRoots.filter((entry) => entry !== resolvedRoot)]
+      .filter(isExistingDirectory)
+      .slice(0, 10);
+    fs.writeFileSync(WORKSPACE_STATE_FILE, JSON.stringify({
+      path: resolvedRoot,
+      trustedRoots,
+      recentRoots,
+    }, null, 2), 'utf-8');
   } catch (error) {
     console.error(`Could not persist workspace path: ${error.message}`);
   }
@@ -50,7 +93,9 @@ function selectFiles(callback) {
 module.exports = {
   DEFAULT_PROJECT_ROOT,
   WORKSPACE_STATE_FILE,
+  loadWorkspaceState,
   loadPersistedWorkspaceRoot,
+  isTrustedWorkspace,
   persistWorkspaceRoot,
   selectFolder,
   selectFiles,

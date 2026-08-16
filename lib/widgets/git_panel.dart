@@ -53,7 +53,11 @@ class _GitPanelState extends State<GitPanel> {
             ),
             child: Row(
               children: [
-                const Icon(Icons.account_tree_outlined, size: 16, color: Color(0xFF9D9D9D)),
+                const Icon(
+                  Icons.account_tree_outlined,
+                  size: 16,
+                  color: Color(0xFF9D9D9D),
+                ),
                 const SizedBox(width: 8),
                 const Text(
                   'SOURCE CONTROL',
@@ -66,7 +70,11 @@ class _GitPanelState extends State<GitPanel> {
                 ),
                 const Spacer(),
                 IconButton(
-                  icon: const Icon(Icons.refresh_rounded, size: 16, color: Color(0xFF8E8E8E)),
+                  icon: const Icon(
+                    Icons.refresh_rounded,
+                    size: 16,
+                    color: Color(0xFF8E8E8E),
+                  ),
                   onPressed: widget.workspaceState.engine.fetchGitStatus,
                   tooltip: 'Refresh Git Status',
                   splashRadius: 16,
@@ -75,8 +83,13 @@ class _GitPanelState extends State<GitPanel> {
                 ),
                 const SizedBox(width: 10),
                 IconButton(
-                  icon: const Icon(Icons.download_rounded, size: 16, color: Color(0xFF8E8E8E)),
-                  onPressed: () => widget.workspaceState.engine.pullGithub(branch),
+                  icon: const Icon(
+                    Icons.download_rounded,
+                    size: 16,
+                    color: Color(0xFF8E8E8E),
+                  ),
+                  onPressed: () =>
+                      widget.workspaceState.engine.pullGithub(branch),
                   tooltip: 'Pull from GitHub',
                   splashRadius: 16,
                   padding: EdgeInsets.zero,
@@ -84,8 +97,13 @@ class _GitPanelState extends State<GitPanel> {
                 ),
                 const SizedBox(width: 10),
                 IconButton(
-                  icon: const Icon(Icons.upload_rounded, size: 16, color: Color(0xFF8E8E8E)),
-                  onPressed: () => widget.workspaceState.engine.pushGithub(branch),
+                  icon: const Icon(
+                    Icons.upload_rounded,
+                    size: 16,
+                    color: Color(0xFF8E8E8E),
+                  ),
+                  onPressed: () =>
+                      widget.workspaceState.engine.pushGithub(branch),
                   tooltip: 'Push to GitHub',
                   splashRadius: 16,
                   padding: EdgeInsets.zero,
@@ -101,11 +119,19 @@ class _GitPanelState extends State<GitPanel> {
             color: const Color(0xFF1E1E1E),
             child: Row(
               children: [
-                const Icon(Icons.alt_route_outlined, size: 14, color: Color(0xFF4EC9B0)),
+                const Icon(
+                  Icons.alt_route_outlined,
+                  size: 14,
+                  color: Color(0xFF4EC9B0),
+                ),
                 const SizedBox(width: 6),
                 Text(
                   'Branch: $branch',
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF4EC9B0)),
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF4EC9B0),
+                  ),
                 ),
               ],
             ),
@@ -122,14 +148,20 @@ class _GitPanelState extends State<GitPanel> {
                   style: const TextStyle(fontSize: 12.5, color: Colors.white),
                   decoration: InputDecoration(
                     hintText: 'Message (Ctrl+Enter to commit)',
-                    hintStyle: const TextStyle(color: Color(0xFF666666), fontSize: 12),
+                    hintStyle: const TextStyle(
+                      color: Color(0xFF666666),
+                      fontSize: 12,
+                    ),
                     filled: true,
                     fillColor: const Color(0xFF3C3C3C),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(4),
                       borderSide: BorderSide.none,
                     ),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 8,
+                    ),
                     isDense: true,
                   ),
                   onSubmitted: (_) => _commit(),
@@ -138,24 +170,34 @@ class _GitPanelState extends State<GitPanel> {
                 ElevatedButton.icon(
                   onPressed: _commit,
                   icon: const Icon(Icons.check_rounded, size: 14),
-                  label: const Text('Commit Changes', style: TextStyle(fontSize: 12)),
+                  label: const Text(
+                    'Commit Changes',
+                    style: TextStyle(fontSize: 12),
+                  ),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF007ACC),
                     foregroundColor: Colors.white,
                     padding: const EdgeInsets.symmetric(vertical: 8),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(4),
+                    ),
                   ),
                 ),
                 const SizedBox(height: 8),
                 OutlinedButton.icon(
                   onPressed: () => _createGithubRepository(context),
                   icon: const Icon(Icons.cloud_upload_outlined, size: 14),
-                  label: const Text('Publish to GitHub', style: TextStyle(fontSize: 12)),
+                  label: const Text(
+                    'Publish to GitHub',
+                    style: TextStyle(fontSize: 12),
+                  ),
                   style: OutlinedButton.styleFrom(
                     foregroundColor: const Color(0xFFCCCCCC),
                     side: const BorderSide(color: Color(0xFF3C3C3C)),
                     padding: const EdgeInsets.symmetric(vertical: 8),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(4),
+                    ),
                   ),
                 ),
               ],
@@ -168,45 +210,70 @@ class _GitPanelState extends State<GitPanel> {
           Expanded(
             child: files.isEmpty
                 ? const Center(
-                    child: Text('No working tree changes', style: TextStyle(color: Color(0xFF666666), fontSize: 12)),
+                    child: Text(
+                      'No working tree changes',
+                      style: TextStyle(color: Color(0xFF666666), fontSize: 12),
+                    ),
                   )
                 : ListView.builder(
                     itemCount: files.length,
                     itemBuilder: (context, index) {
                       final item = files[index];
                       final status = item['status'] as String;
+                      final isStaged = item['staged'] == true;
                       final filePath = item['path'] as String;
 
                       Color statusColor = const Color(0xFFDCDCAA);
-                      if (status == 'M') statusColor = const Color(0xFFE5C07B);
-                      if (status == 'A' || status == '??') statusColor = const Color(0xFF4CAF50);
-                      if (status == 'D') statusColor = const Color(0xFFF44336);
+                      if (status == 'M') {
+                        statusColor = const Color(0xFFE5C07B);
+                      }
+                      if (status == 'A' || status == '??') {
+                        statusColor = const Color(0xFF4CAF50);
+                      }
+                      if (status == 'D') {
+                        statusColor = const Color(0xFFF44336);
+                      }
 
                       return InkWell(
-                        onTap: () => widget.workspaceState.openFile(filePath),
+                        onTap: () => _showDiff(context, filePath, isStaged),
                         child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 8,
+                          ),
                           decoration: const BoxDecoration(
-                            border: Border(bottom: BorderSide(color: Color(0xFF2D2D2D))),
+                            border: Border(
+                              bottom: BorderSide(color: Color(0xFF2D2D2D)),
+                            ),
                           ),
                           child: Row(
                             children: [
                               Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 5,
+                                  vertical: 2,
+                                ),
                                 decoration: BoxDecoration(
                                   color: statusColor.withAlpha(50),
                                   borderRadius: BorderRadius.circular(3),
                                 ),
                                 child: Text(
                                   status.isEmpty ? 'M' : status,
-                                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: statusColor),
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: statusColor,
+                                  ),
                                 ),
                               ),
                               const SizedBox(width: 10),
                               Expanded(
                                 child: Text(
                                   filePath,
-                                  style: const TextStyle(fontSize: 12, color: Color(0xFFCCCCCC)),
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    color: Color(0xFFCCCCCC),
+                                  ),
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),
@@ -222,13 +289,99 @@ class _GitPanelState extends State<GitPanel> {
     );
   }
 
+  Future<void> _showDiff(
+    BuildContext context,
+    String filePath,
+    bool staged,
+  ) async {
+    widget.workspaceState.engine.requestGitDiff(filePath, staged: staged);
+
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => Dialog(
+        backgroundColor: const Color(0xFF1E1E1E),
+        child: SizedBox(
+          width: 760,
+          height: 560,
+          child: AnimatedBuilder(
+            animation: widget.workspaceState.engine,
+            builder: (context, _) {
+              final engine = widget.workspaceState.engine;
+              final isReady = engine.gitDiffPath == filePath;
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 8, 10),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.difference_outlined,
+                          size: 18,
+                          color: Color(0xFF4FC3F7),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Changes: $filePath',
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.pop(dialogContext),
+                          icon: const Icon(
+                            Icons.close_rounded,
+                            color: Color(0xFFCCCCCC),
+                          ),
+                          tooltip: 'Close',
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 1, color: Color(0xFF3C3C3C)),
+                  Expanded(
+                    child: !isReady
+                        ? const Center(child: CircularProgressIndicator())
+                        : SelectionArea(
+                            child: SingleChildScrollView(
+                              padding: const EdgeInsets.all(14),
+                              child: Text(
+                                engine.gitDiff,
+                                style: const TextStyle(
+                                  color: Color(0xFFCCCCCC),
+                                  fontFamily: 'Consolas',
+                                  fontSize: 12,
+                                  height: 1.35,
+                                ),
+                              ),
+                            ),
+                          ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _createGithubRepository(BuildContext context) async {
-    final controller = TextEditingController(text: widget.workspaceState.projectName);
+    final controller = TextEditingController(
+      text: widget.workspaceState.projectName,
+    );
     final repositoryName = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         backgroundColor: const Color(0xFF252526),
-        title: const Text('Publish to GitHub', style: TextStyle(color: Colors.white, fontSize: 16)),
+        title: const Text(
+          'Publish to GitHub',
+          style: TextStyle(color: Colors.white, fontSize: 16),
+        ),
         content: TextField(
           controller: controller,
           autofocus: true,
@@ -240,9 +393,13 @@ class _GitPanelState extends State<GitPanel> {
           onSubmitted: (value) => Navigator.pop(dialogContext, value.trim()),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Cancel'),
+          ),
           ElevatedButton(
-            onPressed: () => Navigator.pop(dialogContext, controller.text.trim()),
+            onPressed: () =>
+                Navigator.pop(dialogContext, controller.text.trim()),
             child: const Text('Create private repository'),
           ),
         ],

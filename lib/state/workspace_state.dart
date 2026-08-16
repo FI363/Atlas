@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../config/atlas_config.dart';
@@ -30,6 +32,7 @@ class WorkspaceState extends ChangeNotifier {
   // Editor
   final List<String> _openFiles = [];
   final Map<String, String> _drafts = {};
+  final Map<String, Timer> _autoSaveTimers = {};
   String? _activeFile;
 
   bool _hasRequestedTree = false;
@@ -38,14 +41,14 @@ class WorkspaceState extends ChangeNotifier {
     settings.engineUrl = AtlasConfig.engineUrl;
     settings.engineToken = AtlasConfig.engineToken;
     engine.addListener(_onEngineUpdate);
-    engine.connect(
-      url: settings.engineUrl,
-      token: settings.engineToken,
-    );
+    engine.connect(url: settings.engineUrl, token: settings.engineToken);
   }
 
   @override
   void dispose() {
+    for (final timer in _autoSaveTimers.values) {
+      timer.cancel();
+    }
     engine.removeListener(_onEngineUpdate);
     engine.disconnect();
     super.dispose();
@@ -183,6 +186,7 @@ class WorkspaceState extends ChangeNotifier {
     if (index == -1) return;
 
     _openFiles.removeAt(index);
+    _autoSaveTimers.remove(filePath)?.cancel();
     _drafts.remove(filePath);
 
     if (_openFiles.isEmpty) {
@@ -200,8 +204,10 @@ class WorkspaceState extends ChangeNotifier {
     }
   }
 
-  void saveFile(String filePath, String content) =>
-      engine.saveFile(filePath, content);
+  void saveFile(String filePath, String content) {
+    _autoSaveTimers.remove(filePath)?.cancel();
+    engine.saveFile(filePath, content);
+  }
 
   void saveCurrentFile() {
     if (_activeFile != null) {
@@ -221,10 +227,18 @@ class WorkspaceState extends ChangeNotifier {
 
   void updateDraft(String filePath, String content) {
     _drafts[filePath] = content;
+    _autoSaveTimers.remove(filePath)?.cancel();
+    if (settings.autoSave) {
+      _autoSaveTimers[filePath] = Timer(const Duration(milliseconds: 750), () {
+        final latestDraft = _drafts[filePath];
+        if (latestDraft != null) engine.saveFile(filePath, latestDraft);
+      });
+    }
     notifyListeners();
   }
 
   void discardDraft(String filePath) {
+    _autoSaveTimers.remove(filePath)?.cancel();
     _drafts.remove(filePath);
     notifyListeners();
   }
@@ -239,15 +253,35 @@ class WorkspaceState extends ChangeNotifier {
 
   void _onEngineUpdate() {
     final persistedSettings = engine.takePendingSettings();
-    if (persistedSettings != null) settings.applyMap(persistedSettings);
+    if (persistedSettings != null) {
+      settings.applyMap(persistedSettings);
+      // Do not allow the prototype's historical token value to replace the
+      // compile-time, per-session token used by current launch scripts.
+      if (settings.engineToken == 'dev-token') {
+        settings.engineToken = AtlasConfig.engineToken;
+      }
+    }
 
-    if (engine.isConnected && !_hasRequestedTree) {
+    if (engine.takeReconnected()) {
+      // Keep tabs and local drafts intact, but refresh all remote-backed data
+      // because the workspace may have changed while the connection was down.
+      _hasRequestedTree = true;
+      engine.requestFileTree();
+      for (final filePath in _openFiles) {
+        if (!_drafts.containsKey(filePath)) {
+          engine.requestFileContent(filePath);
+        }
+      }
+    } else if (engine.isConnected && !_hasRequestedTree) {
       _hasRequestedTree = true;
       engine.requestFileTree();
     }
 
     final saved = engine.takeLastSavedFilePath();
-    if (saved != null) _drafts.remove(saved);
+    if (saved != null) {
+      _autoSaveTimers.remove(saved)?.cancel();
+      _drafts.remove(saved);
+    }
 
     if (engine.takeWorkspaceOpened()) {
       _openFiles.clear();

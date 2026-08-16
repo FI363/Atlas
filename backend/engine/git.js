@@ -72,10 +72,14 @@ function sendGitStatus(ws, workspaceRoot) {
         }));
         return;
       }
-      const files = (stdout || '').split('\n').filter(Boolean).map(line => ({
-        status: line.substring(0, 2).trim(),
-        path: line.substring(3).trim(),
-      }));
+      const files = (stdout || '').split('\n').filter(Boolean).map(line => {
+        const rawStatus = line.substring(0, 2);
+        return {
+          status: rawStatus.trim(),
+          staged: rawStatus[0] !== ' ' && rawStatus[0] !== '?',
+          path: line.substring(3).trim(),
+        };
+      });
       ws.send(JSON.stringify({
         type: 'git_status_result',
         branch: (branchOut || '').trim() || 'HEAD',
@@ -85,14 +89,45 @@ function sendGitStatus(ws, workspaceRoot) {
   });
 }
 
+function sendGitDiff(ws, workspaceRoot, filePath, staged = false) {
+  if (typeof filePath !== 'string' || !filePath.trim()) {
+    ws.send(JSON.stringify({ type: 'error', content: 'Git diff requires a file path.\n' }));
+    return;
+  }
+
+  const args = ['diff'];
+  if (staged) args.push('--staged');
+  // `--` treats the following value as a path even when it begins with `-`.
+  args.push('--', filePath);
+  runGit(args, workspaceRoot, (err, stdout, stderr) => {
+    if (err) {
+      ws.send(JSON.stringify({
+        type: 'error',
+        content: `Git diff failed: ${stderr || err.message}\n`,
+      }));
+      return;
+    }
+    ws.send(JSON.stringify({
+      type: 'git_diff_result',
+      path: filePath,
+      staged,
+      diff: stdout || 'No diff is available for this file. Untracked files must be added before Git can show a patch.',
+    }));
+  });
+}
+
 // Promises for MCP tools
 async function getStatus(cwd) {
   const statusOut = await runGitPromise(['status', '--porcelain'], cwd);
   const branchOut = await runGitPromise(['branch', '--show-current'], cwd).catch(() => 'HEAD');
-  const files = (statusOut || '').split('\n').filter(Boolean).map(line => ({
-    status: line.substring(0, 2).trim(),
-    path: line.substring(3).trim(),
-  }));
+  const files = (statusOut || '').split('\n').filter(Boolean).map(line => {
+    const rawStatus = line.substring(0, 2);
+    return {
+      status: rawStatus.trim(),
+      staged: rawStatus[0] !== ' ' && rawStatus[0] !== '?',
+      path: line.substring(3).trim(),
+    };
+  });
   return {
     branch: (branchOut || '').trim() || 'HEAD',
     files,
@@ -119,6 +154,7 @@ module.exports = {
   runGitPromise,
   callGithubApi,
   sendGitStatus,
+  sendGitDiff,
   getStatus,
   getDiff,
   getLog,

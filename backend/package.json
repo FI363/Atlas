@@ -5,9 +5,11 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "test": "node test/security.test.js && node test/atlas_agent.test.js && node test/conversation_session.test.js"
   },
   "dependencies": {
+    "node-pty": "^1.1.0",
     "ws": "^8.16.0"
   }
 }

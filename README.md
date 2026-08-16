@@ -15,7 +15,11 @@ npm install
 npm run dev
 ```
 
-This starts the engine on port `8080` and opens the Flutter app in Chrome.
+This starts the engine on `127.0.0.1:8080`. Open
+`http://localhost:8081` in your browser when Flutter reports that the web
+server is ready.
+Atlas generates a unique, temporary engine token for the session and passes it
+to the local Flutter client automatically.
 
 ## Run on iPad over LAN
 
@@ -42,7 +46,8 @@ npm run ipad
 ```
 
 This starts:
-- The WebSocket engine on `0.0.0.0:8080` (all interfaces)
+- The WebSocket engine on `0.0.0.0:8080` (all interfaces, protected by a
+  generated session token)
 - The Flutter web server on `0.0.0.0:8081`
 
 ### 4. Open on iPad
@@ -61,7 +66,7 @@ The app automatically rewrites `ws://localhost:8080` → `ws://<YOUR_LAN_IP>:808
 |--------|-------------|
 | `npm run dev` | Engine + Chrome (local development) |
 | `npm run ipad` | Engine + web-server on `0.0.0.0` (LAN access) |
-| `npm run engine` | Engine only (port 8080) |
+| `npm run engine` | Engine only (requires `ATLAS_ENGINE_TOKEN`) |
 
 ## Architecture
 
@@ -92,10 +97,20 @@ This project is configured to work with the built-in AI agent in your IDE (e.g.,
 
 The AI panel can browse and suggest changes to Dart/Flutter code, access dependencies (`pubspec.yaml`), and modify platform-specific code.
 
-The engine can read/write project files and execute shell commands. **Never expose ports 8080/8081 to the public internet.** This is designed for trusted local networks only. Authentication uses a shared token passed via `--dart-define`.
+The engine can read/write project files and execute shell commands. Each
+authenticated client receives its own persistent PTY shell, so interactive
+programs and shell state behave like a real terminal. **Never
+expose ports 8080/8081 to the public internet.** This is designed for trusted
+local networks only. The engine binds to loopback by default and requires a
+shared token. `npm run dev` and `npm run ipad` generate a new token per session;
+for an engine-only start, set `ATLAS_ENGINE_TOKEN` to a strong value first.
 
 ## Atlas AI and workspace persistence
 
 Use **Settings → AI Agent** to choose the provider, model, endpoint, and credentials. Atlas uses OpenRouter's OpenAI-compatible `/api/v1` API; it does not require Claude Code or Anthropic environment variables. The AI panel accepts text/files/images and clipboard image paste (`Ctrl+V` on Windows).
 
 Atlas remembers the selected workspace folder and user settings in the per-user `~/.atlas` state directory. Opening another folder changes the remembered workspace; restarting Atlas does not reset it.
+
+For LAN safety, a remotely connected client can reopen only an already approved
+workspace. To approve a new folder, use **Open Folder** while operating Atlas
+on the engine machine; Atlas stores it in its local trusted-workspace list.

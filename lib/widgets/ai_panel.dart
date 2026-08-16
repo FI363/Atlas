@@ -23,6 +23,9 @@ class _AiPanelState extends State<AiPanel> {
   final _keyboardFocusNode = FocusNode();
   final List<Map<String, dynamic>> _attachments = [];
   String _statusText = '';
+  bool get _canSend =>
+      !widget.workspaceState.engine.isAiThinking &&
+      !widget.workspaceState.engine.agentState.isAgentRunning;
 
   @override
   void initState() {
@@ -404,10 +407,12 @@ class _AiPanelState extends State<AiPanel> {
                     )
                   else
                     InkWell(
-                      onTap: () {
-                        _sendPrompt(_inputController.text);
-                        _inputFocusNode.requestFocus();
-                      },
+                      onTap: _canSend
+                          ? () {
+                              _sendPrompt(_inputController.text);
+                              _inputFocusNode.requestFocus();
+                            }
+                          : null,
                       child: const Padding(
                         padding: EdgeInsets.all(4.0),
                         child: Icon(Icons.send_rounded, size: 16, color: Color(0xFF007ACC)),

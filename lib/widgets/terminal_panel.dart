@@ -16,7 +16,12 @@ class TerminalPanel extends StatefulWidget {
 
 class _TerminalPanelState extends State<TerminalPanel> {
   String _activeTab = 'TERMINAL';
-  final List<String> _tabs = ['PROBLEMS', 'OUTPUT', 'DEBUG CONSOLE', 'TERMINAL'];
+  final List<String> _tabs = [
+    'PROBLEMS',
+    'OUTPUT',
+    'DEBUG CONSOLE',
+    'TERMINAL',
+  ];
 
   final _scrollController = ScrollController();
   final _inputController = TextEditingController();
@@ -24,6 +29,8 @@ class _TerminalPanelState extends State<TerminalPanel> {
 
   final List<String> _commandHistory = [];
   int _historyIndex = -1;
+  int _lastTerminalCols = 0;
+  int _lastTerminalRows = 0;
 
   @override
   void initState() {
@@ -72,13 +79,17 @@ class _TerminalPanelState extends State<TerminalPanel> {
       if (_historyIndex > 0) {
         _historyIndex--;
         _inputController.text = _commandHistory[_historyIndex];
-        _inputController.selection = TextSelection.collapsed(offset: _inputController.text.length);
+        _inputController.selection = TextSelection.collapsed(
+          offset: _inputController.text.length,
+        );
       }
     } else {
       if (_historyIndex < _commandHistory.length - 1) {
         _historyIndex++;
         _inputController.text = _commandHistory[_historyIndex];
-        _inputController.selection = TextSelection.collapsed(offset: _inputController.text.length);
+        _inputController.selection = TextSelection.collapsed(
+          offset: _inputController.text.length,
+        );
       } else {
         _historyIndex = _commandHistory.length;
         _inputController.clear();
@@ -116,7 +127,9 @@ class _TerminalPanelState extends State<TerminalPanel> {
                           decoration: BoxDecoration(
                             border: Border(
                               bottom: BorderSide(
-                                color: isActive ? const Color(0xFF007ACC) : Colors.transparent,
+                                color: isActive
+                                    ? const Color(0xFF007ACC)
+                                    : Colors.transparent,
                                 width: 2,
                               ),
                             ),
@@ -125,9 +138,13 @@ class _TerminalPanelState extends State<TerminalPanel> {
                           child: Text(
                             tab,
                             style: TextStyle(
-                              color: isActive ? Colors.white : const Color(0xFF8E8E8E),
+                              color: isActive
+                                  ? Colors.white
+                                  : const Color(0xFF8E8E8E),
                               fontSize: 11,
-                              fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
+                              fontWeight: isActive
+                                  ? FontWeight.w600
+                                  : FontWeight.normal,
                               letterSpacing: 0.5,
                             ),
                           ),
@@ -161,15 +178,37 @@ class _TerminalPanelState extends State<TerminalPanel> {
 
           // Content Area
           Expanded(
-            child: Container(
-              color: const Color(0xFF0C0C0C), // CMD dark console background
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: _buildContent(),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                _scheduleTerminalResize(constraints);
+                return Container(
+                  color: const Color(0xFF0C0C0C), // CMD dark console background
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 8,
+                  ),
+                  child: _buildContent(),
+                );
+              },
             ),
           ),
         ],
       ),
     );
+  }
+
+  void _scheduleTerminalResize(BoxConstraints constraints) {
+    if (_activeTab != 'TERMINAL') return;
+    final cols = (constraints.maxWidth / 8).floor().clamp(20, 300);
+    final rows = (constraints.maxHeight / 20).floor().clamp(5, 100);
+    if (cols == _lastTerminalCols && rows == _lastTerminalRows) return;
+    _lastTerminalCols = cols;
+    _lastTerminalRows = rows;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        widget.workspaceState.engine.resizeTerminal(cols: cols, rows: rows);
+      }
+    });
   }
 
   Widget _buildContent() {
@@ -185,9 +224,7 @@ class _TerminalPanelState extends State<TerminalPanel> {
                 controller: _scrollController,
                 itemCount: output.length,
                 itemBuilder: (context, index) {
-                  return RichText(
-                    text: _parseAnsiToTextSpan(output[index]),
-                  );
+                  return RichText(text: _parseAnsiToTextSpan(output[index]));
                 },
               ),
             ),
@@ -214,7 +251,8 @@ class _TerminalPanelState extends State<TerminalPanel> {
                     if (event is KeyDownEvent) {
                       if (event.logicalKey == LogicalKeyboardKey.arrowUp) {
                         _navigateHistory(true);
-                      } else if (event.logicalKey == LogicalKeyboardKey.arrowDown) {
+                      } else if (event.logicalKey ==
+                          LogicalKeyboardKey.arrowDown) {
                         _navigateHistory(false);
                       }
                     }
@@ -231,8 +269,12 @@ class _TerminalPanelState extends State<TerminalPanel> {
                       border: InputBorder.none,
                       isDense: true,
                       contentPadding: EdgeInsets.zero,
-                      hintText: 'Type a shell command (e.g. dir, flutter run, git status)...',
-                      hintStyle: TextStyle(color: Color(0xFF555555), fontSize: 12),
+                      hintText:
+                          'Type a shell command (e.g. dir, flutter run, git status)...',
+                      hintStyle: TextStyle(
+                        color: Color(0xFF555555),
+                        fontSize: 12,
+                      ),
                     ),
                     onSubmitted: _submitCommand,
                   ),
@@ -265,7 +307,12 @@ class _TerminalPanelState extends State<TerminalPanel> {
       if (text.startsWith('[ERROR]')) textColor = const Color(0xFFF44336);
       return TextSpan(
         text: text,
-        style: TextStyle(color: textColor, fontSize: 13, fontFamily: 'Consolas', height: 1.35),
+        style: TextStyle(
+          color: textColor,
+          fontSize: 13,
+          fontFamily: 'Consolas',
+          height: 1.35,
+        ),
       );
     }
 
@@ -275,10 +322,17 @@ class _TerminalPanelState extends State<TerminalPanel> {
 
     for (final match in matches) {
       if (match.start > lastEnd) {
-        spans.add(TextSpan(
-          text: text.substring(lastEnd, match.start),
-          style: TextStyle(color: currentColor, fontSize: 13, fontFamily: 'Consolas', height: 1.35),
-        ));
+        spans.add(
+          TextSpan(
+            text: text.substring(lastEnd, match.start),
+            style: TextStyle(
+              color: currentColor,
+              fontSize: 13,
+              fontFamily: 'Consolas',
+              height: 1.35,
+            ),
+          ),
+        );
       }
 
       final code = text.substring(match.start, match.end);
@@ -300,10 +354,17 @@ class _TerminalPanelState extends State<TerminalPanel> {
     }
 
     if (lastEnd < text.length) {
-      spans.add(TextSpan(
-        text: text.substring(lastEnd),
-        style: TextStyle(color: currentColor, fontSize: 13, fontFamily: 'Consolas', height: 1.35),
-      ));
+      spans.add(
+        TextSpan(
+          text: text.substring(lastEnd),
+          style: TextStyle(
+            color: currentColor,
+            fontSize: 13,
+            fontFamily: 'Consolas',
+            height: 1.35,
+          ),
+        ),
+      );
     }
 
     return TextSpan(children: spans);
