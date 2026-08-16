@@ -38,9 +38,35 @@ class WorkspaceState extends ChangeNotifier {
   bool _hasRequestedTree = false;
 
   WorkspaceState() {
+    _initSettingsAndConnect();
+  }
+
+  Future<void> _initSettingsAndConnect() async {
     settings.engineUrl = AtlasConfig.engineUrl;
     settings.engineToken = AtlasConfig.engineToken;
+    await settings.loadPersistedPreferences();
     engine.addListener(_onEngineUpdate);
+    engine.connect(url: settings.engineUrl, token: settings.engineToken);
+    notifyListeners();
+  }
+
+  Future<void> updateConnectionSettings(String url, String token) async {
+    final cleanUrl = url.trim();
+    final cleanToken = token.trim();
+    settings.engineUrl = cleanUrl;
+    settings.engineToken = cleanToken;
+    if (cleanUrl.isNotEmpty && !settings.recentEngineUrls.contains(cleanUrl)) {
+      settings.recentEngineUrls.insert(0, cleanUrl);
+      if (settings.recentEngineUrls.length > 6) {
+        settings.recentEngineUrls = settings.recentEngineUrls.sublist(0, 6);
+      }
+    }
+    await settings.persistPreferences();
+    engine.connect(url: cleanUrl, token: cleanToken);
+    notifyListeners();
+  }
+
+  void reconnectEngine() {
     engine.connect(url: settings.engineUrl, token: settings.engineToken);
   }
 
@@ -139,10 +165,6 @@ class WorkspaceState extends ChangeNotifier {
   void applySettings() {
     engine.sendSettings(settings.toMap());
     notifyListeners();
-  }
-
-  void reconnectEngine() {
-    engine.connect(url: settings.engineUrl, token: settings.engineToken);
   }
 
   void setActiveActivity(String activity) {

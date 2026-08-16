@@ -40,12 +40,38 @@ class _HomeScreenState extends State<HomeScreen> {
       shortcuts: const {
         SingleActivator(LogicalKeyboardKey.keyP, control: true, shift: true): _CommandPaletteIntent(),
         SingleActivator(LogicalKeyboardKey.keyP, meta: true, shift: true): _CommandPaletteIntent(),
+        SingleActivator(LogicalKeyboardKey.keyP, control: true): _CommandPaletteIntent(),
+        SingleActivator(LogicalKeyboardKey.keyP, meta: true): _CommandPaletteIntent(),
+        SingleActivator(LogicalKeyboardKey.keyB, control: true): _ToggleExplorerIntent(),
+        SingleActivator(LogicalKeyboardKey.keyB, meta: true): _ToggleExplorerIntent(),
+        SingleActivator(LogicalKeyboardKey.keyJ, control: true): _ToggleTerminalIntent(),
+        SingleActivator(LogicalKeyboardKey.keyJ, meta: true): _ToggleTerminalIntent(),
+        SingleActivator(LogicalKeyboardKey.keyL, control: true): _ToggleAiPanelIntent(),
+        SingleActivator(LogicalKeyboardKey.keyL, meta: true): _ToggleAiPanelIntent(),
       },
       child: Actions(
         actions: {
           _CommandPaletteIntent: CallbackAction<_CommandPaletteIntent>(
             onInvoke: (_) {
               _workspaceState.toggleCommandPalette();
+              return null;
+            },
+          ),
+          _ToggleExplorerIntent: CallbackAction<_ToggleExplorerIntent>(
+            onInvoke: (_) {
+              _workspaceState.toggleExplorer();
+              return null;
+            },
+          ),
+          _ToggleTerminalIntent: CallbackAction<_ToggleTerminalIntent>(
+            onInvoke: (_) {
+              _workspaceState.toggleTerminal();
+              return null;
+            },
+          ),
+          _ToggleAiPanelIntent: CallbackAction<_ToggleAiPanelIntent>(
+            onInvoke: (_) {
+              _workspaceState.toggleAiPanel();
               return null;
             },
           ),
@@ -174,6 +200,18 @@ class _HomeScreenState extends State<HomeScreen> {
 
 class _CommandPaletteIntent extends Intent {
   const _CommandPaletteIntent();
+}
+
+class _ToggleExplorerIntent extends Intent {
+  const _ToggleExplorerIntent();
+}
+
+class _ToggleTerminalIntent extends Intent {
+  const _ToggleTerminalIntent();
+}
+
+class _ToggleAiPanelIntent extends Intent {
+  const _ToggleAiPanelIntent();
 }
 
 class _HorizontalSplitter extends StatefulWidget {

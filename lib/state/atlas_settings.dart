@@ -1,6 +1,14 @@
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
+
 /// All persistent Atlas user settings. Passed to WorkspaceState and widgets
 /// so every part of the app can react to changes without rebuilding the whole tree.
 class AtlasSettings {
+  // ── Engine & Host ─────────────────────────────────────────────────────────
+  String engineToken = '';
+  String engineUrl = 'ws://localhost:8080';
+  List<String> recentEngineUrls = [];
+
   // ── Editor ────────────────────────────────────────────────────────────────
   double fontSize = 13.5;
   int tabSize = 2;
@@ -43,10 +51,6 @@ class AtlasSettings {
       '3. For terminal commands, use ```bash or ```powershell.\n'
       '4. Keep explanations clear, professional, and concise.';
 
-  // ── Engine ────────────────────────────────────────────────────────────────
-  String engineToken = '';
-  String engineUrl = 'ws://localhost:8080';
-
   // ── GitHub Integration ───────────────────────────────────────────────────
   String githubToken = '';
   String githubUsername = 'FI363';
@@ -57,6 +61,42 @@ class AtlasSettings {
   bool smoothScrolling = true;
 
   AtlasSettings();
+
+  Future<void> loadPersistedPreferences() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedUrl = prefs.getString('atlas_engine_url');
+      final savedToken = prefs.getString('atlas_engine_token');
+      final savedRecents = prefs.getStringList('atlas_recent_engine_urls');
+      final savedSettingsJson = prefs.getString('atlas_user_settings');
+
+      if (savedUrl != null && savedUrl.trim().isNotEmpty) {
+        engineUrl = savedUrl.trim();
+      }
+      if (savedToken != null && savedToken.trim().isNotEmpty) {
+        engineToken = savedToken.trim();
+      }
+      if (savedRecents != null) {
+        recentEngineUrls = savedRecents;
+      }
+      if (savedSettingsJson != null) {
+        final decoded = jsonDecode(savedSettingsJson);
+        if (decoded is Map<String, dynamic>) {
+          applyMap(decoded);
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> persistPreferences() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('atlas_engine_url', engineUrl);
+      await prefs.setString('atlas_engine_token', engineToken);
+      await prefs.setStringList('atlas_recent_engine_urls', recentEngineUrls);
+      await prefs.setString('atlas_user_settings', jsonEncode(toMap()));
+    } catch (_) {}
+  }
 
   void applyMap(Map<String, dynamic> values) {
     fontSize = (values['fontSize'] as num?)?.toDouble() ?? fontSize;

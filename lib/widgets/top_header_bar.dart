@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../state/workspace_state.dart';
+import 'connection_dialog.dart';
 
 /// VS Code-style top bar with text menus, workspace title, and panel controls.
 class TopHeaderBar extends StatelessWidget {
@@ -10,6 +11,8 @@ class TopHeaderBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isConnected = workspaceState.engine.isConnected;
+
     return Container(
       height: 38,
       decoration: BoxDecoration(
@@ -61,19 +64,27 @@ class TopHeaderBar extends StatelessWidget {
           ),
           _HeaderMenu(
             label: 'Tools',
-            items: const ['Settings', 'Reconnect Engine'],
+            items: const ['Settings', 'Engine Connection', 'Reconnect Engine'],
             onSelected: (item) {
               if (item == 'Settings') workspaceState.openSettings();
+              if (item == 'Engine Connection') ConnectionDialog.show(context, workspaceState);
               if (item == 'Reconnect Engine') workspaceState.reconnectEngine();
             },
           ),
           const SizedBox(width: 6),
           const Spacer(),
 
+          // Connection status badge / pairing trigger
+          _ConnectionStatusBadge(
+            isConnected: isConnected,
+            onTap: () => ConnectionDialog.show(context, workspaceState),
+          ),
+          const SizedBox(width: 8),
+
           // Command Palette button (Ctrl+Shift+P)
           _HeaderIconButton(
             icon: Icons.search_rounded,
-            tooltip: 'Command Palette (Ctrl+Shift+P)',
+            tooltip: 'Command Palette (Ctrl+Shift+P / Cmd+Shift+P)',
             onTap: workspaceState.toggleCommandPalette,
           ),
           const SizedBox(width: 4),
@@ -105,6 +116,59 @@ class TopHeaderBar extends StatelessWidget {
           ),
           const SizedBox(width: 12),
         ],
+      ),
+    );
+  }
+}
+
+class _ConnectionStatusBadge extends StatelessWidget {
+  const _ConnectionStatusBadge({required this.isConnected, required this.onTap});
+
+  final bool isConnected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final bg = isConnected ? const Color(0xFF1B3D2F) : const Color(0xFF3D261B);
+    final fg = isConnected ? const Color(0xFF4EC9B0) : const Color(0xFFCE9178);
+
+    return Tooltip(
+      message: isConnected
+          ? 'Connected to Atlas Engine (Tap to configure)'
+          : 'Disconnected from Engine (Tap to pair)',
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: fg.withAlpha(120), width: 0.8),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: fg,
+                ),
+              ),
+              const SizedBox(width: 5),
+              Text(
+                isConnected ? 'Engine Online' : 'Engine Offline',
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                  color: fg,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

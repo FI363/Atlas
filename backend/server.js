@@ -533,17 +533,23 @@ function handleConnection(ws) {
 const wss = new WebSocket.Server({ port: PORT, host: ENGINE_HOST });
 
 wss.on('listening', () => {
-  console.log(`\n  Atlas Engine listening on ${ENGINE_HOST}:${PORT}`);
+  console.log(`\n======================================================`);
+  console.log(`  Atlas Engine listening on ${ENGINE_HOST}:${PORT}`);
+  if (ENGINE_TOKEN) {
+    console.log(`  Session Token: ${ENGINE_TOKEN}`);
+  }
   if (!isLoopbackHost(ENGINE_HOST)) {
     const nets = os.networkInterfaces();
+    console.log(`\n  iPad / Remote Connection Endpoints:`);
     for (const name of Object.keys(nets)) {
       for (const net of nets[name]) {
         if (net.family === 'IPv4' && !net.internal) {
-          console.log(`  LAN:  ws://${net.address}:${PORT}`);
+          console.log(`    ws://${net.address}:${PORT}`);
         }
       }
     }
   }
+  console.log(`======================================================`);
   console.log(`  Default root: ${workspaceModule.DEFAULT_PROJECT_ROOT}\n`);
 });
 
