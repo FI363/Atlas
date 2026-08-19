@@ -35,22 +35,10 @@ class AtlasSettings {
   String openRouterModel = 'google/gemini-2.5-flash';
   String ollamaEndpoint = 'http://localhost:11434';
   String ollamaModel = 'deepseek-coder';
-  String openAiEndpoint = 'https://api.openai.com/v1';
-  String openAiApiKey = '';
-  String openAiModel = 'gpt-4o';
-  String anthropicEndpoint = 'https://api.anthropic.com/v1';
-  String anthropicApiKey = '';
-  String anthropicModel = 'claude-3-5-sonnet-20241022';
-  String geminiApiKey = '';
-  String geminiModel = 'gemini-2.0-flash';
-  String deepseekEndpoint = 'https://api.deepseek.com';
-  String deepseekApiKey = '';
-  String deepseekModel = 'deepseek-chat';
-  String groqEndpoint = 'https://api.groq.com/openai/v1';
-  String groqApiKey = '';
-  String groqModel = 'llama-3.3-70b-versatile';
-  bool allowFullAiAccess = true; // Full AI access flag
   String customAgentEndpoint = '';
+  String customApiKey = '';
+  String customModel = 'default';
+  bool allowFullAiAccess = true; // Full AI access flag
   int aiMaxTokens = 4096;
   double aiTemperature = 0.2;
   String aiSystemPrompt =
@@ -123,7 +111,7 @@ class AtlasSettings {
     
     if (values['aiProvider'] is String) {
       final provider = values['aiProvider'] as String;
-      aiProvider = AiProvider.values.firstWhere((item) => item.name == provider, orElse: () => aiProvider);
+      aiProvider = AiProvider.values.firstWhere((item) => item.name == provider, orElse: () => AiProvider.openRouter);
     }
     if (values['useAgentMode'] is bool) useAgentMode = values['useAgentMode'] as bool;
     if (values['agentPermissionPolicy'] is String) agentPermissionPolicy = values['agentPermissionPolicy'] as String;
@@ -133,21 +121,9 @@ class AtlasSettings {
     if (values['openRouterModel'] is String) openRouterModel = values['openRouterModel'] as String;
     if (values['ollamaEndpoint'] is String) ollamaEndpoint = values['ollamaEndpoint'] as String;
     if (values['ollamaModel'] is String) ollamaModel = values['ollamaModel'] as String;
-    if (values['openAiEndpoint'] is String) openAiEndpoint = values['openAiEndpoint'] as String;
-    if (values['openAiApiKey'] is String) openAiApiKey = values['openAiApiKey'] as String;
-    if (values['openAiModel'] is String) openAiModel = values['openAiModel'] as String;
-    if (values['anthropicEndpoint'] is String) anthropicEndpoint = values['anthropicEndpoint'] as String;
-    if (values['anthropicApiKey'] is String) anthropicApiKey = values['anthropicApiKey'] as String;
-    if (values['anthropicModel'] is String) anthropicModel = values['anthropicModel'] as String;
-    if (values['geminiApiKey'] is String) geminiApiKey = values['geminiApiKey'] as String;
-    if (values['geminiModel'] is String) geminiModel = values['geminiModel'] as String;
-    if (values['deepseekEndpoint'] is String) deepseekEndpoint = values['deepseekEndpoint'] as String;
-    if (values['deepseekApiKey'] is String) deepseekApiKey = values['deepseekApiKey'] as String;
-    if (values['deepseekModel'] is String) deepseekModel = values['deepseekModel'] as String;
-    if (values['groqEndpoint'] is String) groqEndpoint = values['groqEndpoint'] as String;
-    if (values['groqApiKey'] is String) groqApiKey = values['groqApiKey'] as String;
-    if (values['groqModel'] is String) groqModel = values['groqModel'] as String;
     if (values['customAgentEndpoint'] is String) customAgentEndpoint = values['customAgentEndpoint'] as String;
+    if (values['customApiKey'] is String) customApiKey = values['customApiKey'] as String;
+    if (values['customModel'] is String) customModel = values['customModel'] as String;
     aiMaxTokens = (values['aiMaxTokens'] as num?)?.toInt() ?? aiMaxTokens;
     aiTemperature = (values['aiTemperature'] as num?)?.toDouble() ?? aiTemperature;
     if (values['aiSystemPrompt'] is String) aiSystemPrompt = values['aiSystemPrompt'] as String;
@@ -182,21 +158,9 @@ class AtlasSettings {
       'openRouterModel': openRouterModel,
       'ollamaEndpoint': ollamaEndpoint,
       'ollamaModel': ollamaModel,
-      'openAiEndpoint': openAiEndpoint,
-      'openAiApiKey': openAiApiKey,
-      'openAiModel': openAiModel,
-      'anthropicEndpoint': anthropicEndpoint,
-      'anthropicApiKey': anthropicApiKey,
-      'anthropicModel': anthropicModel,
-      'geminiApiKey': geminiApiKey,
-      'geminiModel': geminiModel,
-      'deepseekEndpoint': deepseekEndpoint,
-      'deepseekApiKey': deepseekApiKey,
-      'deepseekModel': deepseekModel,
-      'groqEndpoint': groqEndpoint,
-      'groqApiKey': groqApiKey,
-      'groqModel': groqModel,
       'customAgentEndpoint': customAgentEndpoint,
+      'customApiKey': customApiKey,
+      'customModel': customModel,
       'aiMaxTokens': aiMaxTokens,
       'aiTemperature': aiTemperature,
       'aiSystemPrompt': aiSystemPrompt,
@@ -212,52 +176,32 @@ class AtlasSettings {
   }
 }
 
-enum AiProvider { openRouter, builtIn, ollama, openAi, anthropic, gemini, deepseek, groq, custom }
+enum AiProvider { openRouter, ollama, builtIn, custom }
 
 extension AiProviderLabel on AiProvider {
   String get label {
     switch (this) {
       case AiProvider.openRouter:
         return 'OpenRouter';
-      case AiProvider.anthropic:
-        return 'Anthropic (Claude)';
-      case AiProvider.gemini:
-        return 'Google Gemini';
-      case AiProvider.deepseek:
-        return 'DeepSeek';
-      case AiProvider.groq:
-        return 'Groq (Ultra-Fast)';
-      case AiProvider.openAi:
-        return 'OpenAI';
       case AiProvider.ollama:
-        return 'Ollama (Local)';
+        return 'Local Agent (Ollama / On-Device)';
       case AiProvider.builtIn:
-        return 'Built-in (Offline)';
+        return 'Built-in (Offline Agent)';
       case AiProvider.custom:
-        return 'Custom API';
+        return 'Custom Endpoint';
     }
   }
 
   String get description {
     switch (this) {
       case AiProvider.openRouter:
-        return 'Access Gemini, Claude, DeepSeek, and Llama through OpenRouter API.';
-      case AiProvider.anthropic:
-        return 'Direct Anthropic Claude 3.5 Sonnet / Claude 3.7.';
-      case AiProvider.gemini:
-        return 'Direct Google Gemini 2.0 Flash / Pro.';
-      case AiProvider.deepseek:
-        return 'Direct DeepSeek V3 / R1 reasoning API.';
-      case AiProvider.groq:
-        return 'Ultra-low latency Llama-3.3-70B inference via Groq.';
-      case AiProvider.openAi:
-        return 'OpenAI GPT-4o, GPT-4o-mini, o1/o3-mini.';
+        return 'Access top AI models (Gemini, Claude, DeepSeek, Llama, GPT) through OpenRouter.';
       case AiProvider.ollama:
-        return 'Run open-source models locally on your GPU/CPU.';
+        return 'Run open-source models locally on your GPU/CPU via Ollama or local runtime.';
       case AiProvider.builtIn:
-        return 'Simple offline local agent for file manipulation.';
+        return 'Fast offline agent for direct workspace operations and code parsing.';
       case AiProvider.custom:
-        return 'Any OpenAI-compatible or custom HTTP endpoint.';
+        return 'Connect to any custom OpenAI-compatible server or proxy endpoint.';
     }
   }
 }

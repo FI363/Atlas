@@ -352,21 +352,37 @@ function callAiProvider(settings, prompt, contextCode, attachments, callback) {
   else if (provider === 'custom') {
     const endpoint = settings.customAgentEndpoint || '';
     if (!endpoint) return callback(null, '❌ Custom Endpoint URL is missing in Settings.');
-    let url;
-    try {
-      url = new URL(endpoint);
-    } catch {
-      return callback(null, `❌ Invalid Custom URL: ${endpoint}`);
-    }
+    const apiKey = settings.customApiKey || '';
+    const model = settings.customModel || 'default';
+    const headers = {};
+    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
 
+    const url = resolveEndpoint(endpoint, 'chat/completions');
     sendJsonRequest(
       {
         url,
-        body: { prompt, contextCode, systemPrompt, attachments },
+        headers,
+        body: {
+          model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: userText },
+          ],
+          prompt,
+          contextCode,
+          systemPrompt,
+          attachments,
+          temperature: settings.aiTemperature || 0.2,
+          max_tokens: settings.aiMaxTokens || 4096,
+        },
       },
       (err, data) => {
         if (err) return callback(null, `❌ Custom Endpoint Failed: ${err.message}`);
-        callback(null, typeof data === 'string' ? data : data.content || JSON.stringify(data));
+        if (data?.choices?.[0]?.message?.content) {
+          callback(null, `### ⚡ Custom Agent (${model})\n\n${data.choices[0].message.content}`);
+        } else {
+          callback(null, typeof data === 'string' ? data : data.content || JSON.stringify(data));
+        }
       }
     );
   }
@@ -382,7 +398,7 @@ function callAiProvider(settings, prompt, contextCode, attachments, callback) {
     } else if (lower.includes('test') || lower.includes('generate tests')) {
       aiAnswer = `### 🧪 Atlas Built-In Agent: Unit Test\n\n\`\`\`dart\nvoid main() {\n  group('WorkspaceState Unit Tests', () {\n    test('verifies initial state and settings', () {\n      // Test implementation\n    });\n  });\n}\n\`\`\``;
     } else {
-      aiAnswer = `### 🤖 Atlas Built-In Agent\n\nReceived prompt: "${prompt}".\n\n${contextCode ? '📄 Active File Context Included (' + contextCode.split('\n').length + ' lines).' : 'No active file open.'}\n\n*Tip: Connect **OpenRouter**, **OpenAI**, **Claude**, or **Ollama** in Settings for full LLM intelligence!*`;
+      aiAnswer = `### 🤖 Atlas Built-In Agent\n\nReceived prompt: "${prompt}".\n\n${contextCode ? '📄 Active File Context Included (' + contextCode.split('\n').length + ' lines).' : 'No active file open.'}\n\n*Tip: Connect **OpenRouter**, **Ollama (Local)**, or **Custom Endpoints** in Settings for full LLM intelligence!*`;
     }
     setTimeout(() => callback(null, aiAnswer), 200);
   }
@@ -571,9 +587,10 @@ function callAiProviderWithTools(settings, conversation, callback) {
   const provider = settings.aiProvider || 'builtIn';
   const tools = settings.tools || [];
 
-  // ── OpenRouter / OpenAI / DeepSeek / Groq ──────────────────────────────────
+  // ── OpenRouter / Custom Endpoint ───────────────────────────────────────────
   if (
     provider === 'openRouter' ||
+    provider === 'custom' ||
     provider === 'openAi' ||
     provider === 'deepseek' ||
     provider === 'groq'
@@ -585,7 +602,11 @@ function callAiProviderWithTools(settings, conversation, callback) {
       process.env.OPENROUTER_API_KEY ||
       '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';
 
-    if (provider === 'openAi') {
+    if (provider === 'custom') {
+      endpoint = settings.customAgentEndpoint || 'http://localhost:8000/v1';
+      model = settings.customModel || 'default';
+      apiKey = settings.customApiKey || '';
+    } else if (provider === 'openAi') {
       endpoint = settings.openAiEndpoint || 'https://api.openai.com/v1';
       model = settings.openAiModel || 'gpt-4o';
       apiKey = settings.openAiApiKey || '';
@@ -599,13 +620,13 @@ function callAiProviderWithTools(settings, conversation, callback) {
       apiKey = settings.groqApiKey || '';
     }
 
-    if (!apiKey) {
+    if (provider !== 'custom' && !apiKey) {
       return callback(null, { content: `❌ API Key is missing for ${provider}. Configure in Settings.` });
     }
 
     const url = resolveEndpoint(endpoint, 'chat/completions');
     const headers = {
-      Authorization: `Bearer ${apiKey}`,
+      ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
       'HTTP-Referer': 'https://github.com/atlas-ide',
       'X-Title': 'Atlas IDE',
     };
@@ -781,9 +802,311 @@ function callAiProviderWithTools(settings, conversation, callback) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Retry wrapper
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Wraps an async function with exponential-backoff retry logic.
+ * Retries on HTTP 429 (rate limit) and 5xx server errors.
+ * Never retries on 4xx auth / validation errors.
+ *
+ * @param {Function} fn   async () => result
+ * @param {object}   opts { maxAttempts=3, baseBackoffMs=1000, label='' }
+ */
+async function callWithRetry(fn, { maxAttempts = 3, baseBackoffMs = 1000, label = '' } = {}) {
+  let lastErr;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      const status = err.statusCode || 0;
+      const retryable = status === 429 || (status >= 500 && status < 600) || status === 0;
+      if (!retryable || attempt === maxAttempts) throw err;
+      const wait = baseBackoffMs * Math.pow(2, attempt - 1);
+      console.warn(`[Retry] ${label} attempt ${attempt} failed (${err.message}). Retrying in ${wait}ms…`);
+      await new Promise((r) => setTimeout(r, wait));
+    }
+  }
+  throw lastErr;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Streaming HTTP helper (SSE / chunked)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Makes a streaming POST request and calls `onLine` for every SSE `data:` line.
+ * Calls `onComplete(err)` when the stream ends.
+ *
+ * @param {object}   opts       { url, headers, body, timeoutMs }
+ * @param {Function} onLine     (rawLine: string) => void
+ * @param {Function} onComplete (err: Error|null) => void
+ */
+function sendStreamingRequest({ url, headers = {}, body, timeoutMs = 120000 }, onLine, onComplete) {
+  let parsedUrl;
+  try {
+    parsedUrl = typeof url === 'string' ? new URL(url) : url;
+  } catch (e) {
+    return onComplete(new Error(`Invalid URL: ${url}`));
+  }
+
+  const postData = typeof body === 'string' ? body : JSON.stringify(body);
+  const mergedHeaders = {
+    'Content-Type': 'application/json',
+    'Accept': 'text/event-stream',
+    ...headers,
+    'Content-Length': Buffer.byteLength(postData),
+  };
+
+  const httpModule = parsedUrl.protocol === 'https:' ? require('https') : require('http');
+  let done = false;
+
+  const req = httpModule.request(parsedUrl, { method: 'POST', headers: mergedHeaders, timeout: timeoutMs }, (res) => {
+    if (res.statusCode >= 400) {
+      let raw = '';
+      res.on('data', (c) => (raw += c));
+      res.on('end', () => {
+        let msg = `HTTP ${res.statusCode}`;
+        try { msg += ': ' + (JSON.parse(raw)?.error?.message || raw); } catch { msg += ': ' + raw; }
+        const err = new Error(msg);
+        err.statusCode = res.statusCode;
+        if (!done) { done = true; onComplete(err); }
+      });
+      return;
+    }
+
+    let buf = '';
+    res.setEncoding('utf8');
+    res.on('data', (chunk) => {
+      buf += chunk;
+      const lines = buf.split('\n');
+      buf = lines.pop(); // keep partial line
+      for (const line of lines) {
+        onLine(line);
+      }
+    });
+    res.on('end', () => {
+      if (buf) onLine(buf);
+      if (!done) { done = true; onComplete(null); }
+    });
+    res.on('error', (e) => { if (!done) { done = true; onComplete(e); } });
+  });
+
+  req.on('timeout', () => { req.destroy(); if (!done) { done = true; onComplete(new Error('Stream timed out')); } });
+  req.on('error', (e) => { if (!done) { done = true; onComplete(e); } });
+  req.write(postData);
+  req.end();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Streaming provider dispatcher
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Calls an AI provider in streaming mode.
+ *
+ * @param {object}   settings         Same settings object used elsewhere.
+ * @param {Array}    conversation      OpenAI-format message array.
+ * @param {object}   callbacks
+ * @param {Function} callbacks.onToken    (token: string) => void
+ * @param {Function} callbacks.onComplete (err: Error|null, fullText: string) => void
+ */
+function callAiProviderStreaming(settings, conversation, { onToken, onComplete, tools }) {
+  const provider = settings.aiProvider || 'builtIn';
+
+  // Built-in fallback cannot stream; emit full response as single token
+  if (provider === 'builtIn') {
+    callAiProviderWithTools({ ...settings, tools }, conversation, (err, resp) => {
+      if (err) return onComplete(err, '');
+      const text = resp?.content || '';
+      if (text) onToken(text);
+      onComplete(null, text);
+    });
+    return;
+  }
+
+  // OpenAI-compatible (OpenRouter, Custom, Ollama, OpenAI fallback)
+  if (['openRouter', 'custom', 'ollama', 'openAi', 'deepseek', 'groq'].includes(provider)) {
+    let endpoint, model, apiKey;
+    switch (provider) {
+      case 'openRouter':
+        endpoint = settings.openRouterEndpoint || 'https://openrouter.ai/api/v1';
+        model    = settings.openRouterModel || 'google/gemini-2.5-flash';
+        apiKey   = settings.openRouterApiKey || process.env.OPENROUTER_API_KEY || '';
+        break;
+      case 'custom':
+        endpoint = settings.customAgentEndpoint || 'http://localhost:8000/v1';
+        model    = settings.customModel || 'default';
+        apiKey   = settings.customApiKey || '';
+        break;
+      case 'ollama':
+        endpoint = settings.ollamaEndpoint || 'http://localhost:11434';
+        model    = settings.ollamaModel || 'deepseek-coder';
+        apiKey   = '';
+        break;
+      case 'openAi':
+        endpoint = settings.openAiEndpoint || 'https://api.openai.com/v1';
+        model    = settings.openAiModel || 'gpt-4o';
+        apiKey   = settings.openAiApiKey || process.env.OPENAI_API_KEY || '';
+        break;
+      case 'deepseek':
+        endpoint = settings.deepseekEndpoint || 'https://api.deepseek.com';
+        model    = settings.deepseekModel || 'deepseek-chat';
+        apiKey   = settings.deepseekApiKey || '';
+        break;
+      case 'groq':
+        endpoint = settings.groqEndpoint || 'https://api.groq.com/openai/v1';
+        model    = settings.groqModel || 'llama-3.3-70b-versatile';
+        apiKey   = settings.groqApiKey || '';
+        break;
+    }
+
+    const url = resolveEndpoint(endpoint, 'chat/completions');
+    const body = {
+      model,
+      messages: conversation,
+      temperature: settings.aiTemperature ?? 0.2,
+      max_tokens:  settings.aiMaxTokens  ?? 4096,
+      stream: true,
+    };
+    if (tools && tools.length > 0) body.tools = tools;
+    // Ollama uses a different stream format key
+    if (provider === 'ollama') body.stream = true;
+
+    const headers = { Authorization: `Bearer ${apiKey}` };
+    if (provider === 'openRouter') {
+      headers['HTTP-Referer'] = 'https://github.com/atlas-ide';
+      headers['X-Title'] = 'Atlas IDE';
+    }
+
+    let fullText = '';
+    let pendingToolCalls = [];
+
+    sendStreamingRequest({ url, headers, body }, (line) => {
+      if (!line.startsWith('data:')) return;
+      const raw = line.slice(5).trim();
+      if (raw === '[DONE]') return;
+      let chunk;
+      try { chunk = JSON.parse(raw); } catch { return; }
+
+      const delta = chunk.choices?.[0]?.delta;
+      if (!delta) return;
+
+      // Text token
+      if (delta.content) {
+        fullText += delta.content;
+        onToken(delta.content);
+      }
+
+      // Tool call accumulation (streamed in pieces)
+      if (delta.tool_calls) {
+        for (const tc of delta.tool_calls) {
+          const idx = tc.index ?? 0;
+          if (!pendingToolCalls[idx]) {
+            pendingToolCalls[idx] = { id: tc.id || '', function: { name: '', arguments: '' } };
+          }
+          if (tc.id) pendingToolCalls[idx].id = tc.id;
+          if (tc.function?.name) pendingToolCalls[idx].function.name += tc.function.name;
+          if (tc.function?.arguments) pendingToolCalls[idx].function.arguments += tc.function.arguments;
+        }
+      }
+    }, (err) => {
+      if (err) return onComplete(err, fullText);
+      onComplete(null, fullText, pendingToolCalls.length > 0 ? pendingToolCalls : null);
+    });
+    return;
+  }
+
+  // Anthropic streaming
+  if (provider === 'anthropic') {
+    const endpoint = settings.anthropicEndpoint || 'https://api.anthropic.com/v1';
+    const model    = settings.anthropicModel || 'claude-3-5-sonnet-20241022';
+    const apiKey   = settings.anthropicApiKey || '';
+    const url = resolveEndpoint(endpoint, 'messages');
+
+    const systemMsg = conversation.find((m) => m.role === 'system')?.content || '';
+    const messages  = conversation.filter((m) => m.role !== 'system').map((m) => ({
+      role: m.role === 'assistant' ? 'assistant' : 'user',
+      content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+    }));
+
+    const body = {
+      model,
+      system: systemMsg,
+      messages,
+      max_tokens: settings.aiMaxTokens ?? 4096,
+      stream: true,
+    };
+
+    const headers = {
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    };
+
+    let fullText = '';
+    sendStreamingRequest({ url, headers, body }, (line) => {
+      if (!line.startsWith('data:')) return;
+      let chunk;
+      try { chunk = JSON.parse(line.slice(5).trim()); } catch { return; }
+      if (chunk.type === 'content_block_delta' && chunk.delta?.text) {
+        fullText += chunk.delta.text;
+        onToken(chunk.delta.text);
+      }
+    }, (err) => {
+      onComplete(err, fullText);
+    });
+    return;
+  }
+
+  // Gemini streaming
+  if (provider === 'gemini') {
+    const model  = settings.geminiModel  || 'gemini-2.0-flash';
+    const apiKey = settings.geminiApiKey || '';
+    const url    = new URL(`https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${apiKey}`);
+
+    const systemMsg = conversation.find((m) => m.role === 'system')?.content || '';
+    const contents  = conversation
+      .filter((m) => m.role !== 'system')
+      .map((m) => ({
+        role: m.role === 'assistant' ? 'model' : 'user',
+        parts: [{ text: typeof m.content === 'string' ? m.content : JSON.stringify(m.content) }],
+      }));
+
+    const body = {
+      contents,
+      systemInstruction: systemMsg ? { parts: [{ text: systemMsg }] } : undefined,
+      generationConfig: { temperature: settings.aiTemperature ?? 0.2, maxOutputTokens: settings.aiMaxTokens ?? 4096 },
+    };
+
+    let fullText = '';
+    sendStreamingRequest({ url, headers: {}, body }, (line) => {
+      if (!line.startsWith('data:')) return;
+      let chunk;
+      try { chunk = JSON.parse(line.slice(5).trim()); } catch { return; }
+      const text = chunk.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      if (text) { fullText += text; onToken(text); }
+    }, (err) => {
+      onComplete(err, fullText);
+    });
+    return;
+  }
+
+  // Fallback for unknown provider
+  callAiProviderWithTools({ ...settings, tools }, conversation, (err, resp) => {
+    if (err) return onComplete(err, '');
+    const text = resp?.content || '';
+    if (text) onToken(text);
+    onComplete(null, text, resp?.toolCalls || null);
+  });
+}
+
 module.exports = {
   callAiProvider,
   callAiProviderWithTools,
+  callAiProviderStreaming,
+  callWithRetry,
   extractToolCallsFromText,
   resolveEndpoint,
 };

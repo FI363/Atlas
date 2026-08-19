@@ -9,11 +9,8 @@ const filesystemModule = require('./engine/filesystem');
 const searchModule = require('./engine/search');
 const gitModule = require('./engine/git');
 const terminalModule = require('./engine/terminal');
-const aiProvidersModule = require('./engine/ai_providers');
-const { PermissionManager } = require('./engine/permissions');
-const { initializeMcpTools } = require('./engine/mcp/init');
-const { AgentLoop } = require('./engine/agent/agent_loop');
-const { ConversationSessionStore, isValidConversationSessionId } = require('./engine/agent/conversation_session');
+const { initializeAgentRuntime } = require('./engine/runtime/init_runtime');
+const { AgentEvents } = require('./engine/runtime/event_bus');
 const { isLoopbackHost, validateEngineConfig } = require('./engine/security');
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 8080;
@@ -22,25 +19,85 @@ const { host: ENGINE_HOST, token: ENGINE_TOKEN } = validateEngineConfig({
   token: process.env.ATLAS_ENGINE_TOKEN,
 });
 
-// Initialize MCP tools globally
-const toolRegistry = initializeMcpTools();
-const conversationSessions = new ConversationSessionStore();
-
 // Active connection state
 function handleConnection(ws) {
   let authenticated = false;
   let activeProc = null;
   let terminalSession = null;
-  let activeAgentLoop = null;
-  let activeConversationSession = null;
-  let pendingDiffResolver = null;
-  // Old clients do not send a session id. They still retain context for this
-  // WebSocket connection, while current clients retain it across reconnects.
   const connectionSessionId = require('crypto').randomUUID();
 
-  let clientSettings = { aiProvider: 'builtIn', ...settingsModule.loadPersistedSettings() };
+  let clientSettings = { aiProvider: 'openRouter', ...settingsModule.loadPersistedSettings() };
   let workspaceRoot = workspaceModule.loadPersistedWorkspaceRoot();
-  const permissionManager = new PermissionManager(clientSettings.agentPermissionPolicy || 'approve_write');
+
+  // Initialize isolated Agent Runtime for this client connection
+  const runtime = initializeAgentRuntime({
+    permissionPolicy: clientSettings.agentPermissionPolicy || 'approve_write',
+  });
+
+  // Forward EventBus events to WebSocket client
+  runtime.eventBus.on('*', (e) => {
+    switch (e.event) {
+      case AgentEvents.STARTED:
+        ws.send(JSON.stringify({
+          type: 'agent_progress',
+          status: `Starting task: ${e.task ? e.task.substring(0, 50) : ''}...`,
+        }));
+        break;
+      case AgentEvents.TOOL_CALL:
+        ws.send(JSON.stringify({
+          type: 'agent_tool_call',
+          id: e.id,
+          toolName: e.toolName,
+          args: e.args,
+          iteration: e.iteration,
+        }));
+        break;
+      case AgentEvents.TOOL_RESULT:
+        ws.send(JSON.stringify({
+          type: 'agent_tool_result',
+          id: e.id,
+          toolName: e.toolName,
+          result: e.result,
+          iteration: e.iteration,
+        }));
+        break;
+      case AgentEvents.PERMISSION_REQUESTED:
+        ws.send(JSON.stringify({
+          type: 'agent_approval_request',
+          requestId: e.requestId,
+          toolName: e.toolName,
+          args: e.args,
+          category: e.level,
+        }));
+        break;
+      case AgentEvents.FILE_CHANGED:
+        ws.send(JSON.stringify({
+          type: 'workspace_changed',
+          message: `File modified: ${e.path}`,
+        }));
+        break;
+      case AgentEvents.COMPLETED:
+        ws.send(JSON.stringify({
+          type: 'agent_response',
+          content: e.content,
+          iterations: e.iterations,
+        }));
+        break;
+      case AgentEvents.FAILED:
+        ws.send(JSON.stringify({
+          type: 'agent_response',
+          content: `Agent error: ${e.error}`,
+          iterations: 0,
+        }));
+        break;
+      case AgentEvents.CANCELLED:
+        ws.send(JSON.stringify({
+          type: 'agent_progress',
+          status: 'Agent execution cancelled.',
+        }));
+        break;
+    }
+  });
 
   const startTerminal = (options = {}) => {
     if (terminalSession) return terminalSession;
@@ -91,8 +148,8 @@ function handleConnection(ws) {
       case 'update_settings': {
         clientSettings = data.settings || {};
         settingsModule.persistSettings(clientSettings);
-        permissionManager.setPolicy(clientSettings.agentPermissionPolicy || 'approve_write');
-        console.log(`Settings updated. AI Provider: ${clientSettings.aiProvider || 'builtIn'}`);
+        runtime.permissionManager.setPolicy(clientSettings.agentPermissionPolicy || 'approve_write');
+        console.log(`Settings updated. AI Provider: ${clientSettings.aiProvider || 'openRouter'}`);
         break;
       }
 
@@ -271,154 +328,80 @@ function handleConnection(ws) {
       // ── Simple AI Chat Prompt (Backwards Compatible) ─────────────────────
       case 'ai_prompt': {
         const prompt = data.prompt || '';
-        const contextCode = data.contextCode || '';
+        const ideContext = data.ideContext || {};
         const settings = data.settings || clientSettings;
-        const attachments = Array.isArray(data.attachments) ? data.attachments : [];
+        const sessionId = data.sessionId || connectionSessionId;
+        const session = runtime.sessionManager.getOrCreate(sessionId, {
+          workspaceRoot,
+          providerId: settings.aiProvider || 'gemini',
+          modelId: settings.openRouterModel || settings.geminiModel || 'gemini-2.5-flash',
+        });
 
-        console.log(`AI Agent Prompt (${settings.aiProvider || 'builtIn'}): ${prompt.substring(0, 60)}...`);
+        console.log(`AI Chat Prompt via AgentRuntime: ${prompt.substring(0, 60)}...`);
 
-        aiProvidersModule.callAiProvider(settings, prompt, contextCode, attachments, (err, answer) => {
+        runtime.agentRuntime.start({
+          prompt,
+          session,
+          ideContext: { workspaceRoot, ...ideContext },
+          settings,
+        }).then((result) => {
           ws.send(JSON.stringify({
             type: 'ai_response',
             prompt: prompt,
-            content: answer,
+            content: result.content,
+          }));
+        }).catch((err) => {
+          ws.send(JSON.stringify({
+            type: 'ai_response',
+            prompt: prompt,
+            content: `Error: ${err.message}`,
           }));
         });
         break;
       }
 
-      // ── Atlas Agent / MCP Loop Protocol ──────────────────────────────────
+      // ── Atlas Agent Runtime Loop Protocol ────────────────────────────────
       case 'agent_start': {
         const prompt = data.prompt || '';
         const ideContext = data.ideContext || {};
         const settings = data.settings || clientSettings;
-        const sessionId = isValidConversationSessionId(data.sessionId)
-          ? data.sessionId
-          : connectionSessionId;
-        const conversationSession = conversationSessions.getOrCreate(sessionId, workspaceRoot);
+        const sessionId = data.sessionId || connectionSessionId;
+        const session = runtime.sessionManager.getOrCreate(sessionId, {
+          workspaceRoot,
+          providerId: settings.aiProvider || 'gemini',
+          modelId: settings.openRouterModel || settings.geminiModel || 'gemini-2.5-flash',
+        });
 
-        console.log(`Starting Atlas Agent Loop: "${prompt.substring(0, 50)}..."`);
+        console.log(`Starting Atlas Agent Loop via AgentRuntime: "${prompt.substring(0, 50)}..."`);
 
-        if (activeAgentLoop) {
+        if (runtime.agentRuntime.isRunning) {
           ws.send(JSON.stringify({
             type: 'error',
             content: 'An agent task is already running in this conversation. Wait for it to finish or cancel it before sending another message.\n',
           }));
           break;
         }
-        if (!conversationSession.startRun()) {
-          ws.send(JSON.stringify({
-            type: 'error',
-            content: 'This conversation is already running on another connection. Wait for it to finish before sending another message.\n',
-          }));
-          break;
-        }
-        activeConversationSession = conversationSession;
 
-        activeAgentLoop = new AgentLoop({
-          workspaceRoot,
-          permissionManager,
-          toolRegistry,
+        runtime.agentRuntime.start({
+          prompt,
+          session,
+          ideContext: { workspaceRoot, ...ideContext },
           settings,
-          conversation: conversationSession.conversation,
-          callbacks: {
-            onProgress: (status) => {
-              ws.send(JSON.stringify({ type: 'agent_progress', status }));
-            },
-            onToolCall: (info) => {
-              ws.send(JSON.stringify({ type: 'agent_tool_call', ...info }));
-            },
-            onToolResult: (info) => {
-              ws.send(JSON.stringify({ type: 'agent_tool_result', ...info }));
-            },
-            onRequestApproval: (approvalReq) => {
-              return new Promise((resolve) => {
-                const pendingPromise = permissionManager.createPendingApproval(
-                  approvalReq.requestId,
-                  approvalReq.toolName,
-                  approvalReq.args,
-                  approvalReq.category
-                );
-
-                ws.send(JSON.stringify({
-                  type: 'agent_approval_request',
-                  requestId: approvalReq.requestId,
-                  toolName: approvalReq.toolName,
-                  args: approvalReq.args,
-                  category: approvalReq.category,
-                }));
-
-                pendingPromise.then(resolve);
-              });
-            },
-            onDiffProposal: (diffInfo) => {
-              return new Promise((resolve) => {
-                pendingDiffResolver = resolve;
-                ws.send(JSON.stringify({
-                  type: 'agent_diff_proposal',
-                  path: diffInfo.path,
-                  diff: diffInfo.diff,
-                  hunks: diffInfo.hunks,
-                }));
-              });
-            },
-            onComplete: (result) => {
-              // Save the conversation history back to the session for continuity
-              conversationSession.conversation = activeAgentLoop.conversation;
-              conversationSession.finishRun();
-              if (activeConversationSession === conversationSession) {
-                activeAgentLoop = null;
-                activeConversationSession = null;
-              }
-              ws.send(JSON.stringify({
-                type: 'agent_response',
-                content: result.content,
-                iterations: result.iterations,
-              }));
-            },
-            onError: (err) => {
-              conversationSession.finishRun();
-              if (activeConversationSession === conversationSession) {
-                activeAgentLoop = null;
-                activeConversationSession = null;
-              }
-              ws.send(JSON.stringify({ type: 'error', content: `Agent error: ${err}` }));
-            },
-          },
-        });
-
-        activeAgentLoop.run(prompt, ideContext).catch((error) => {
-          const message = `Agent failed: ${error.message}. Your conversation was preserved; you can retry.`;
-          conversationSession.conversation.push({ role: 'assistant', content: message });
-          conversationSession.finishRun();
-          if (activeConversationSession === conversationSession) {
-            activeAgentLoop = null;
-            activeConversationSession = null;
-          }
-          ws.send(JSON.stringify({ type: 'agent_response', content: message, iterations: 0 }));
+        }).catch((error) => {
+          console.error('Agent execution failed:', error.message);
         });
         break;
       }
 
       case 'agent_cancel': {
-        if (activeAgentLoop) {
-          activeAgentLoop.cancel();
-          activeAgentLoop = null;
-          activeConversationSession?.finishRun();
-          activeConversationSession = null;
-          ws.send(JSON.stringify({ type: 'agent_progress', status: 'Agent cancelled by user.' }));
-        }
+        runtime.agentRuntime.cancel();
         break;
       }
 
       case 'agent_approval_response': {
         const requestId = data.requestId;
         const granted = !!data.granted;
-        if (granted) {
-          permissionManager.grantPending(requestId);
-        } else {
-          permissionManager.denyPending(requestId, data.reason || 'User rejected permission request');
-        }
+        runtime.permissionManager.resolvePendingApproval(requestId, granted, data.reason || '');
         break;
       }
 
@@ -520,10 +503,9 @@ function handleConnection(ws) {
     if (activeProc) {
       terminalModule.killProcess(activeProc);
     }
-    if (activeAgentLoop) {
-      activeAgentLoop.cancel();
+    if (runtime && runtime.agentRuntime) {
+      runtime.agentRuntime.cancel();
     }
-    activeConversationSession?.finishRun();
     console.log('Client disconnected.');
   });
 }
