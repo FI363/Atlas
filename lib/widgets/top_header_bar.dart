@@ -1,5 +1,5 @@
-
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../state/workspace_state.dart';
 import 'connection_dialog.dart';
@@ -23,10 +23,9 @@ class _MenuEntry {
     this.label,
     this.shortcut,
     this.icon,
-    this.isSeparator = false,
     this.enabled = true,
     this.checked = false,
-  });
+  }) : isSeparator = false;
 
   const _MenuEntry.separator()
       : id = null,
@@ -38,16 +37,206 @@ class _MenuEntry {
         checked = false;
 }
 
+/// A named menu definition used by the header bar.
+class _MenuDef {
+  final String label;
+  final List<_MenuEntry> items;
+  final ValueChanged<String> onSelected;
+
+  const _MenuDef({
+    required this.label,
+    required this.items,
+    required this.onSelected,
+  });
+}
+
 /// VS Code-style top bar with text menus, workspace title, and panel controls.
-class TopHeaderBar extends StatelessWidget {
+/// Menus open on click and switch on hover — identical to VS Code behaviour.
+class TopHeaderBar extends StatefulWidget {
   const TopHeaderBar({super.key, required this.workspaceState});
 
   final WorkspaceState workspaceState;
 
-  // ── File menu items (mirrors VS Code almost 1:1) ─────────────────────────
+  @override
+  State<TopHeaderBar> createState() => _TopHeaderBarState();
+}
+
+class _TopHeaderBarState extends State<TopHeaderBar> {
+  /// Index of the currently-open menu, or null if all are closed.
+  int? _activeMenuIndex;
+
+  /// The overlay entry for the dropdown + dismiss barrier.
+  OverlayEntry? _overlayEntry;
+
+  /// Keys attached to each menu label so we can measure their position.
+  final List<GlobalKey> _menuKeys = List.generate(8, (_) => GlobalKey());
+
+  WorkspaceState get ws => widget.workspaceState;
+
+  // ── Menu definitions ─────────────────────────────────────────────────────
+
+  List<_MenuDef> _buildMenuDefs() => [
+        // 0 — File
+        _MenuDef(
+          label: 'File',
+          items: _fileMenuItems(),
+          onSelected: _handleFileAction,
+        ),
+        // 1 — Edit
+        _MenuDef(
+          label: 'Edit',
+          items: const [
+            _MenuEntry(id: 'undo', label: 'Undo', shortcut: 'Ctrl+Z', icon: Icons.undo_rounded),
+            _MenuEntry(id: 'redo', label: 'Redo', shortcut: 'Ctrl+Y', icon: Icons.redo_rounded),
+            _MenuEntry.separator(),
+            _MenuEntry(id: 'cut', label: 'Cut', shortcut: 'Ctrl+X', icon: Icons.content_cut_rounded),
+            _MenuEntry(id: 'copy', label: 'Copy', shortcut: 'Ctrl+C', icon: Icons.content_copy_rounded),
+            _MenuEntry(id: 'paste', label: 'Paste', shortcut: 'Ctrl+V', icon: Icons.content_paste_rounded),
+            _MenuEntry.separator(),
+            _MenuEntry(id: 'find', label: 'Find', shortcut: 'Ctrl+F', icon: Icons.search_rounded),
+            _MenuEntry(id: 'replace', label: 'Replace', shortcut: 'Ctrl+H', icon: Icons.find_replace_rounded),
+            _MenuEntry.separator(),
+            _MenuEntry(id: 'find_in_files', label: 'Find in Files', shortcut: 'Ctrl+Shift+F', icon: Icons.manage_search_rounded),
+            _MenuEntry(id: 'replace_in_files', label: 'Replace in Files', shortcut: 'Ctrl+Shift+H', icon: Icons.find_replace_rounded),
+            _MenuEntry.separator(),
+            _MenuEntry(id: 'toggle_line_comment', label: 'Toggle Line Comment', shortcut: 'Ctrl+/', icon: Icons.comment_rounded),
+            _MenuEntry(id: 'toggle_block_comment', label: 'Toggle Block Comment', shortcut: 'Shift+Alt+A', icon: Icons.code_rounded),
+            _MenuEntry(id: 'emmet_expand', label: 'Emmet: Expand Abbreviation', shortcut: 'Tab', icon: Icons.expand_rounded),
+          ],
+          onSelected: (_) {},
+        ),
+        // 2 — Selection
+        _MenuDef(
+          label: 'Selection',
+          items: const [
+            _MenuEntry(id: 'select_all', label: 'Select All', shortcut: 'Ctrl+A', icon: Icons.select_all_rounded),
+            _MenuEntry.separator(),
+            _MenuEntry(id: 'expand_selection', label: 'Expand Selection', shortcut: 'Shift+Alt+→'),
+            _MenuEntry(id: 'shrink_selection', label: 'Shrink Selection', shortcut: 'Shift+Alt+←'),
+            _MenuEntry.separator(),
+            _MenuEntry(id: 'copy_line_up', label: 'Copy Line Up', shortcut: 'Shift+Alt+↑'),
+            _MenuEntry(id: 'copy_line_down', label: 'Copy Line Down', shortcut: 'Shift+Alt+↓'),
+            _MenuEntry(id: 'move_line_up', label: 'Move Line Up', shortcut: 'Alt+↑'),
+            _MenuEntry(id: 'move_line_down', label: 'Move Line Down', shortcut: 'Alt+↓'),
+            _MenuEntry.separator(),
+            _MenuEntry(id: 'add_cursor_above', label: 'Add Cursor Above', shortcut: 'Ctrl+Alt+↑'),
+            _MenuEntry(id: 'add_cursor_below', label: 'Add Cursor Below', shortcut: 'Ctrl+Alt+↓'),
+          ],
+          onSelected: (_) {},
+        ),
+        // 3 — View
+        _MenuDef(
+          label: 'View',
+          items: [
+            const _MenuEntry(id: 'command_palette', label: 'Command Palette', shortcut: 'Ctrl+Shift+P', icon: Icons.keyboard_command_key_rounded),
+            const _MenuEntry(id: 'open_view', label: 'Open View…', shortcut: 'Ctrl+Q'),
+            const _MenuEntry.separator(),
+            _MenuEntry(id: 'explorer', label: 'Explorer', shortcut: 'Ctrl+Shift+E', icon: Icons.folder_outlined, checked: ws.isExplorerVisible),
+            const _MenuEntry(id: 'search', label: 'Search', shortcut: 'Ctrl+Shift+F', icon: Icons.search_rounded),
+            const _MenuEntry(id: 'git', label: 'Source Control', shortcut: 'Ctrl+Shift+G', icon: Icons.account_tree_rounded),
+            const _MenuEntry.separator(),
+            _MenuEntry(id: 'terminal', label: 'Terminal', shortcut: 'Ctrl+`', icon: Icons.terminal_rounded, checked: ws.isTerminalVisible),
+            _MenuEntry(id: 'ai_panel', label: 'Atlas AI', shortcut: 'Ctrl+Shift+A', icon: Icons.auto_awesome_outlined, checked: ws.isAiPanelVisible),
+            const _MenuEntry.separator(),
+            const _MenuEntry(id: 'zen_mode', label: 'Zen Mode', shortcut: 'Ctrl+K Z', icon: Icons.fullscreen_rounded),
+          ],
+          onSelected: (id) {
+            switch (id) {
+              case 'command_palette':
+                ws.toggleCommandPalette();
+                break;
+              case 'explorer':
+                ws.toggleExplorer();
+                break;
+              case 'search':
+                ws.setActiveActivity('Search');
+                break;
+              case 'git':
+                ws.setActiveActivity('Git');
+                break;
+              case 'terminal':
+                ws.toggleTerminal();
+                break;
+              case 'ai_panel':
+                ws.toggleAiPanel();
+                break;
+            }
+          },
+        ),
+        // 4 — Go
+        _MenuDef(
+          label: 'Go',
+          items: const [
+            _MenuEntry(id: 'go_back', label: 'Back', shortcut: 'Alt+←', icon: Icons.arrow_back_rounded),
+            _MenuEntry(id: 'go_forward', label: 'Forward', shortcut: 'Alt+→', icon: Icons.arrow_forward_rounded),
+            _MenuEntry.separator(),
+            _MenuEntry(id: 'go_to_file', label: 'Go to File…', shortcut: 'Ctrl+P', icon: Icons.insert_drive_file_outlined),
+            _MenuEntry(id: 'go_to_line', label: 'Go to Line…', shortcut: 'Ctrl+G', icon: Icons.format_list_numbered_rounded),
+            _MenuEntry(id: 'go_to_symbol', label: 'Go to Symbol…', shortcut: 'Ctrl+Shift+O', icon: Icons.code_rounded),
+            _MenuEntry.separator(),
+            _MenuEntry(id: 'go_to_definition', label: 'Go to Definition', shortcut: 'F12'),
+            _MenuEntry(id: 'go_to_references', label: 'Go to References', shortcut: 'Shift+F12'),
+          ],
+          onSelected: (_) {},
+        ),
+        // 5 — Run
+        _MenuDef(
+          label: 'Run',
+          items: const [
+            _MenuEntry(id: 'run_project', label: 'Run Project', shortcut: 'F5', icon: Icons.play_arrow_rounded),
+            _MenuEntry(id: 'stop', label: 'Stop', shortcut: 'Shift+F5', icon: Icons.stop_rounded),
+            _MenuEntry.separator(),
+            _MenuEntry(id: 'run_command', label: 'Run Command…', icon: Icons.code_rounded),
+          ],
+          onSelected: (id) {
+            if (id == 'run_project') ws.runProject();
+            if (id == 'stop') ws.engine.killProcess();
+          },
+        ),
+        // 6 — Terminal
+        _MenuDef(
+          label: 'Terminal',
+          items: [
+            const _MenuEntry(id: 'new_terminal', label: 'New Terminal', shortcut: 'Ctrl+Shift+`', icon: Icons.add_rounded),
+            const _MenuEntry.separator(),
+            _MenuEntry(id: 'show_terminal', label: 'Show Terminal', icon: Icons.terminal_rounded, checked: ws.isTerminalVisible),
+            const _MenuEntry(id: 'clear_terminal', label: 'Clear Terminal', icon: Icons.cleaning_services_rounded),
+            const _MenuEntry.separator(),
+            const _MenuEntry(id: 'reconnect_engine', label: 'Reconnect Engine', icon: Icons.refresh_rounded),
+          ],
+          onSelected: (id) {
+            switch (id) {
+              case 'new_terminal':
+              case 'show_terminal':
+                if (!ws.isTerminalVisible) ws.toggleTerminal();
+                break;
+              case 'clear_terminal':
+                ws.engine.clearTerminal();
+                break;
+              case 'reconnect_engine':
+                ws.reconnectEngine();
+                break;
+            }
+          },
+        ),
+        // 7 — Help
+        _MenuDef(
+          label: 'Help',
+          items: const [
+            _MenuEntry(id: 'about', label: 'About Atlas', icon: Icons.info_outline_rounded),
+            _MenuEntry.separator(),
+            _MenuEntry(id: 'keyboard_shortcuts', label: 'Keyboard Shortcuts', shortcut: 'Ctrl+K Ctrl+S', icon: Icons.keyboard_rounded),
+            _MenuEntry(id: 'documentation', label: 'Documentation', icon: Icons.menu_book_rounded),
+          ],
+          onSelected: (_) {},
+        ),
+      ];
+
+  // ── File menu items ──────────────────────────────────────────────────────
+
   List<_MenuEntry> _fileMenuItems() {
-    final hasActiveFile = workspaceState.activeFile != null;
-    final hasUnsaved = workspaceState.hasAnyUnsavedChanges;
+    final hasActiveFile = ws.activeFile != null;
+    final hasUnsaved = ws.hasAnyUnsavedChanges;
 
     return [
       _MenuEntry(id: 'new_file', label: 'New Text File', shortcut: 'Ctrl+N', icon: Icons.note_add_outlined),
@@ -61,7 +250,7 @@ class TopHeaderBar extends StatelessWidget {
       _MenuEntry(id: 'save_as', label: 'Save As…', shortcut: 'Ctrl+Shift+S', icon: Icons.save_as_outlined, enabled: hasActiveFile),
       _MenuEntry(id: 'save_all', label: 'Save All', shortcut: 'Ctrl+K S', icon: Icons.save_alt_rounded, enabled: hasUnsaved),
       const _MenuEntry.separator(),
-      _MenuEntry(id: 'auto_save', label: 'Auto Save', icon: Icons.update_rounded, checked: workspaceState.settings.autoSave),
+      _MenuEntry(id: 'auto_save', label: 'Auto Save', icon: Icons.update_rounded, checked: ws.settings.autoSave),
       const _MenuEntry.separator(),
       _MenuEntry(id: 'preferences', label: 'Preferences', shortcut: '▸', icon: Icons.settings_outlined),
       const _MenuEntry.separator(),
@@ -76,56 +265,150 @@ class TopHeaderBar extends StatelessWidget {
   void _handleFileAction(String id) {
     switch (id) {
       case 'new_file':
-        workspaceState.toggleCommandPalette(); // open palette to type filename
-        break;
-      case 'new_window':
-        // Not yet implemented — placeholder
+        ws.toggleCommandPalette();
         break;
       case 'open_file':
-        workspaceState.toggleCommandPalette();
+        ws.toggleCommandPalette();
         break;
       case 'open_folder':
-        workspaceState.toggleCommandPalette();
-        break;
-      case 'open_recent':
-        // Sub-menu — placeholder
+        ws.toggleCommandPalette();
         break;
       case 'save':
-        workspaceState.saveCurrentFile();
+        ws.saveCurrentFile();
         break;
       case 'save_as':
-        workspaceState.saveCurrentFile(); // save-as not yet distinct
+        ws.saveCurrentFile();
         break;
       case 'save_all':
-        workspaceState.saveAllFiles();
+        ws.saveAllFiles();
         break;
       case 'auto_save':
-        workspaceState.settings.autoSave = !workspaceState.settings.autoSave;
-        workspaceState.applySettings();
+        ws.settings.autoSave = !ws.settings.autoSave;
+        ws.applySettings();
         break;
       case 'preferences':
-        workspaceState.openSettings();
+        ws.openSettings();
         break;
       case 'revert_file':
-        final active = workspaceState.activeFile;
-        if (active != null) workspaceState.discardDraft(active);
+        final active = ws.activeFile;
+        if (active != null) ws.discardDraft(active);
         break;
       case 'close_editor':
-        final active = workspaceState.activeFile;
-        if (active != null) workspaceState.closeFile(active);
-        break;
-      case 'close_folder':
-        // Placeholder — no "close folder" API yet
+        final active = ws.activeFile;
+        if (active != null) ws.closeFile(active);
         break;
       case 'refresh_workspace':
-        workspaceState.refreshWorkspace();
+        ws.refreshWorkspace();
         break;
     }
   }
 
+  // ── Overlay management ───────────────────────────────────────────────────
+
+  void _showMenu(int index) {
+    // Remove old overlay if switching menus.
+    _overlayEntry?.remove();
+    _overlayEntry = null;
+
+    final key = _menuKeys[index];
+    final renderBox = key.currentContext?.findRenderObject() as RenderBox?;
+    if (renderBox == null) return;
+
+    final pos = renderBox.localToGlobal(Offset.zero);
+    final size = renderBox.size;
+    final menus = _buildMenuDefs();
+    final menuDef = menus[index];
+
+    _overlayEntry = OverlayEntry(
+      builder: (ctx) => Stack(
+        children: [
+          // ── Dismiss barrier (below header bar so label hover still works) ──
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onTap: _hideMenu,
+              onSecondaryTap: _hideMenu,
+            ),
+          ),
+          // ── Dropdown ─────────────────────────────────────────────────────
+          Positioned(
+            left: pos.dx,
+            top: pos.dy + size.height + 2,
+            child: _MenuDropdown(
+              items: menuDef.items,
+              onSelected: (id) {
+                _hideMenu();
+                menuDef.onSelected(id);
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+
+    Overlay.of(context).insert(_overlayEntry!);
+    setState(() => _activeMenuIndex = index);
+  }
+
+  void _hideMenu() {
+    _overlayEntry?.remove();
+    _overlayEntry = null;
+    if (mounted) setState(() => _activeMenuIndex = null);
+  }
+
+  void _onLabelTap(int index) {
+    if (_activeMenuIndex == index) {
+      _hideMenu();
+    } else {
+      _showMenu(index);
+    }
+  }
+
+  void _onLabelHover(int index) {
+    // Only switch on hover if a menu is already open (VS Code behaviour).
+    if (_activeMenuIndex != null && _activeMenuIndex != index) {
+      _showMenu(index);
+    }
+  }
+
+  @override
+  void dispose() {
+    _overlayEntry?.remove();
+    super.dispose();
+  }
+
+  // ── Build ────────────────────────────────────────────────────────────────
+
+  Widget _buildMenuLabel(int index, String label) {
+    final isActive = _activeMenuIndex == index;
+
+    return MouseRegion(
+      onEnter: (_) => _onLabelHover(index),
+      child: GestureDetector(
+        onTap: () => _onLabelTap(index),
+        child: Container(
+          key: _menuKeys[index],
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+          decoration: BoxDecoration(
+            color: isActive ? const Color(0xFF37373D) : Colors.transparent,
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: isActive ? Colors.white : const Color(0xFFCCCCCC),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final isConnected = workspaceState.engine.isConnected;
+    final isConnected = ws.engine.isConnected;
+    final menus = _buildMenuDefs();
 
     return Container(
       height: 38,
@@ -139,165 +422,8 @@ class TopHeaderBar extends StatelessWidget {
           const Icon(Icons.code_rounded, size: 17, color: Color(0xFF3794FF)),
           const SizedBox(width: 10),
 
-          // ── File ──────────────────────────────────────────────────────
-          _RichHeaderMenu(
-            label: 'File',
-            items: _fileMenuItems(),
-            onSelected: _handleFileAction,
-          ),
-
-          // ── Edit ─────────────────────────────────────────────────────
-          _RichHeaderMenu(
-            label: 'Edit',
-            items: const [
-              _MenuEntry(id: 'undo', label: 'Undo', shortcut: 'Ctrl+Z', icon: Icons.undo_rounded),
-              _MenuEntry(id: 'redo', label: 'Redo', shortcut: 'Ctrl+Y', icon: Icons.redo_rounded),
-              _MenuEntry.separator(),
-              _MenuEntry(id: 'cut', label: 'Cut', shortcut: 'Ctrl+X', icon: Icons.content_cut_rounded),
-              _MenuEntry(id: 'copy', label: 'Copy', shortcut: 'Ctrl+C', icon: Icons.content_copy_rounded),
-              _MenuEntry(id: 'paste', label: 'Paste', shortcut: 'Ctrl+V', icon: Icons.content_paste_rounded),
-              _MenuEntry.separator(),
-              _MenuEntry(id: 'find', label: 'Find', shortcut: 'Ctrl+F', icon: Icons.search_rounded),
-              _MenuEntry(id: 'replace', label: 'Replace', shortcut: 'Ctrl+H', icon: Icons.find_replace_rounded),
-              _MenuEntry.separator(),
-              _MenuEntry(id: 'find_in_files', label: 'Find in Files', shortcut: 'Ctrl+Shift+F', icon: Icons.manage_search_rounded),
-              _MenuEntry(id: 'replace_in_files', label: 'Replace in Files', shortcut: 'Ctrl+Shift+H', icon: Icons.find_replace_rounded),
-            ],
-            onSelected: (_) {
-              // Editor key-bindings handle these natively — placeholder for now.
-            },
-          ),
-
-          // ── Selection (like VS Code) ─────────────────────────────────
-          _RichHeaderMenu(
-            label: 'Selection',
-            items: const [
-              _MenuEntry(id: 'select_all', label: 'Select All', shortcut: 'Ctrl+A', icon: Icons.select_all_rounded),
-              _MenuEntry.separator(),
-              _MenuEntry(id: 'expand_selection', label: 'Expand Selection', shortcut: 'Shift+Alt+→'),
-              _MenuEntry(id: 'shrink_selection', label: 'Shrink Selection', shortcut: 'Shift+Alt+←'),
-              _MenuEntry.separator(),
-              _MenuEntry(id: 'copy_line_up', label: 'Copy Line Up', shortcut: 'Shift+Alt+↑'),
-              _MenuEntry(id: 'copy_line_down', label: 'Copy Line Down', shortcut: 'Shift+Alt+↓'),
-              _MenuEntry(id: 'move_line_up', label: 'Move Line Up', shortcut: 'Alt+↑'),
-              _MenuEntry(id: 'move_line_down', label: 'Move Line Down', shortcut: 'Alt+↓'),
-              _MenuEntry.separator(),
-              _MenuEntry(id: 'add_cursor_above', label: 'Add Cursor Above', shortcut: 'Ctrl+Alt+↑'),
-              _MenuEntry(id: 'add_cursor_below', label: 'Add Cursor Below', shortcut: 'Ctrl+Alt+↓'),
-            ],
-            onSelected: (_) {},
-          ),
-
-          // ── View ─────────────────────────────────────────────────────
-          _RichHeaderMenu(
-            label: 'View',
-            items: [
-              const _MenuEntry(id: 'command_palette', label: 'Command Palette', shortcut: 'Ctrl+Shift+P', icon: Icons.keyboard_command_key_rounded),
-              const _MenuEntry(id: 'open_view', label: 'Open View…', shortcut: 'Ctrl+Q'),
-              const _MenuEntry.separator(),
-              _MenuEntry(id: 'explorer', label: 'Explorer', shortcut: 'Ctrl+Shift+E', icon: Icons.folder_outlined, checked: workspaceState.isExplorerVisible),
-              const _MenuEntry(id: 'search', label: 'Search', shortcut: 'Ctrl+Shift+F', icon: Icons.search_rounded),
-              const _MenuEntry(id: 'git', label: 'Source Control', shortcut: 'Ctrl+Shift+G', icon: Icons.account_tree_rounded),
-              const _MenuEntry.separator(),
-              _MenuEntry(id: 'terminal', label: 'Terminal', shortcut: 'Ctrl+`', icon: Icons.terminal_rounded, checked: workspaceState.isTerminalVisible),
-              _MenuEntry(id: 'ai_panel', label: 'Atlas AI', shortcut: 'Ctrl+Shift+A', icon: Icons.auto_awesome_outlined, checked: workspaceState.isAiPanelVisible),
-              const _MenuEntry.separator(),
-              const _MenuEntry(id: 'zen_mode', label: 'Zen Mode', shortcut: 'Ctrl+K Z', icon: Icons.fullscreen_rounded),
-            ],
-            onSelected: (id) {
-              switch (id) {
-                case 'command_palette':
-                  workspaceState.toggleCommandPalette();
-                  break;
-                case 'explorer':
-                  workspaceState.toggleExplorer();
-                  break;
-                case 'search':
-                  workspaceState.setActiveActivity('Search');
-                  break;
-                case 'git':
-                  workspaceState.setActiveActivity('Git');
-                  break;
-                case 'terminal':
-                  workspaceState.toggleTerminal();
-                  break;
-                case 'ai_panel':
-                  workspaceState.toggleAiPanel();
-                  break;
-              }
-            },
-          ),
-
-          // ── Go ───────────────────────────────────────────────────────
-          _RichHeaderMenu(
-            label: 'Go',
-            items: const [
-              _MenuEntry(id: 'go_back', label: 'Back', shortcut: 'Alt+←', icon: Icons.arrow_back_rounded),
-              _MenuEntry(id: 'go_forward', label: 'Forward', shortcut: 'Alt+→', icon: Icons.arrow_forward_rounded),
-              _MenuEntry.separator(),
-              _MenuEntry(id: 'go_to_file', label: 'Go to File…', shortcut: 'Ctrl+P', icon: Icons.insert_drive_file_outlined),
-              _MenuEntry(id: 'go_to_line', label: 'Go to Line…', shortcut: 'Ctrl+G', icon: Icons.format_list_numbered_rounded),
-              _MenuEntry(id: 'go_to_symbol', label: 'Go to Symbol…', shortcut: 'Ctrl+Shift+O', icon: Icons.code_rounded),
-              _MenuEntry.separator(),
-              _MenuEntry(id: 'go_to_definition', label: 'Go to Definition', shortcut: 'F12'),
-              _MenuEntry(id: 'go_to_references', label: 'Go to References', shortcut: 'Shift+F12'),
-            ],
-            onSelected: (_) {},
-          ),
-
-          // ── Run ──────────────────────────────────────────────────────
-          _RichHeaderMenu(
-            label: 'Run',
-            items: const [
-              _MenuEntry(id: 'run_project', label: 'Run Project', shortcut: 'F5', icon: Icons.play_arrow_rounded),
-              _MenuEntry(id: 'stop', label: 'Stop', shortcut: 'Shift+F5', icon: Icons.stop_rounded),
-              _MenuEntry.separator(),
-              _MenuEntry(id: 'run_command', label: 'Run Command…', icon: Icons.code_rounded),
-            ],
-            onSelected: (id) {
-              if (id == 'run_project') workspaceState.runProject();
-              if (id == 'stop') workspaceState.engine.killProcess();
-            },
-          ),
-
-          // ── Terminal ─────────────────────────────────────────────────
-          _RichHeaderMenu(
-            label: 'Terminal',
-            items: [
-              const _MenuEntry(id: 'new_terminal', label: 'New Terminal', shortcut: 'Ctrl+Shift+`', icon: Icons.add_rounded),
-              const _MenuEntry.separator(),
-              _MenuEntry(id: 'show_terminal', label: 'Show Terminal', icon: Icons.terminal_rounded, checked: workspaceState.isTerminalVisible),
-              const _MenuEntry(id: 'clear_terminal', label: 'Clear Terminal', icon: Icons.cleaning_services_rounded),
-              const _MenuEntry.separator(),
-              const _MenuEntry(id: 'reconnect_engine', label: 'Reconnect Engine', icon: Icons.refresh_rounded),
-            ],
-            onSelected: (id) {
-              switch (id) {
-                case 'new_terminal':
-                case 'show_terminal':
-                  if (!workspaceState.isTerminalVisible) workspaceState.toggleTerminal();
-                  break;
-                case 'clear_terminal':
-                  workspaceState.engine.clearTerminal();
-                  break;
-                case 'reconnect_engine':
-                  workspaceState.reconnectEngine();
-                  break;
-              }
-            },
-          ),
-
-          // ── Help ─────────────────────────────────────────────────────
-          _RichHeaderMenu(
-            label: 'Help',
-            items: const [
-              _MenuEntry(id: 'about', label: 'About Atlas', icon: Icons.info_outline_rounded),
-              _MenuEntry.separator(),
-              _MenuEntry(id: 'keyboard_shortcuts', label: 'Keyboard Shortcuts', shortcut: 'Ctrl+K Ctrl+S', icon: Icons.keyboard_rounded),
-              _MenuEntry(id: 'documentation', label: 'Documentation', icon: Icons.menu_book_rounded),
-            ],
-            onSelected: (_) {},
-          ),
+          // Menu labels
+          for (int i = 0; i < menus.length; i++) _buildMenuLabel(i, menus[i].label),
 
           const SizedBox(width: 6),
           const Spacer(),
@@ -305,7 +431,7 @@ class TopHeaderBar extends StatelessWidget {
           // Connection status badge / pairing trigger
           _ConnectionStatusBadge(
             isConnected: isConnected,
-            onTap: () => ConnectionDialog.show(context, workspaceState),
+            onTap: () => ConnectionDialog.show(context, ws),
           ),
           const SizedBox(width: 8),
 
@@ -313,7 +439,7 @@ class TopHeaderBar extends StatelessWidget {
           _HeaderIconButton(
             icon: Icons.search_rounded,
             tooltip: 'Command Palette (Ctrl+Shift+P / Cmd+Shift+P)',
-            onTap: workspaceState.toggleCommandPalette,
+            onTap: ws.toggleCommandPalette,
           ),
           const SizedBox(width: 4),
 
@@ -322,7 +448,7 @@ class TopHeaderBar extends StatelessWidget {
             icon: Icons.play_arrow_outlined,
             tooltip: 'Run Project (flutter run)',
             color: const Color(0xFF4EC9B0),
-            onTap: workspaceState.runProject,
+            onTap: ws.runProject,
           ),
           const SizedBox(width: 4),
 
@@ -330,8 +456,8 @@ class TopHeaderBar extends StatelessWidget {
           _HeaderIconButton(
             icon: Icons.terminal_outlined,
             tooltip: 'Toggle Terminal',
-            isActive: workspaceState.isTerminalVisible,
-            onTap: workspaceState.toggleTerminal,
+            isActive: ws.isTerminalVisible,
+            onTap: ws.toggleTerminal,
           ),
           const SizedBox(width: 4),
 
@@ -339,8 +465,8 @@ class TopHeaderBar extends StatelessWidget {
           _HeaderIconButton(
             icon: Icons.auto_awesome_outlined,
             tooltip: 'Toggle Atlas AI',
-            isActive: workspaceState.isAiPanelVisible,
-            onTap: workspaceState.toggleAiPanel,
+            isActive: ws.isAiPanelVisible,
+            onTap: ws.toggleAiPanel,
           ),
           const SizedBox(width: 12),
         ],
@@ -350,111 +476,119 @@ class TopHeaderBar extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// _RichHeaderMenu — VS Code-style dropdown with icons, shortcuts, separators,
-// check-marks, and disabled items.
+// _MenuDropdown — The actual VS Code-style dropdown rendered in the overlay.
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _RichHeaderMenu extends StatefulWidget {
-  const _RichHeaderMenu({
-    required this.label,
-    required this.items,
-    required this.onSelected,
-  });
+class _MenuDropdown extends StatelessWidget {
+  const _MenuDropdown({required this.items, required this.onSelected});
 
-  final String label;
   final List<_MenuEntry> items;
   final ValueChanged<String> onSelected;
 
   @override
-  State<_RichHeaderMenu> createState() => _RichHeaderMenuState();
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        constraints: const BoxConstraints(minWidth: 220),
+        decoration: BoxDecoration(
+          color: const Color(0xFF252526),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(color: const Color(0xFF454545), width: 0.5),
+          boxShadow: const [
+            BoxShadow(color: Colors.black54, blurRadius: 16, offset: Offset(0, 4)),
+          ],
+        ),
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: IntrinsicWidth(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: items.map((item) {
+              if (item.isSeparator) {
+                return Container(
+                  height: 1,
+                  margin: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                  color: const Color(0xFF454545),
+                );
+              }
+              return _MenuItemRow(item: item, onTap: onSelected);
+            }).toList(),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
-class _RichHeaderMenuState extends State<_RichHeaderMenu> {
-  bool _isHovered = false;
+// ─────────────────────────────────────────────────────────────────────────────
+// _MenuItemRow — A single interactive row inside the dropdown.
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _MenuItemRow extends StatefulWidget {
+  const _MenuItemRow({required this.item, required this.onTap});
+
+  final _MenuEntry item;
+  final ValueChanged<String> onTap;
+
+  @override
+  State<_MenuItemRow> createState() => _MenuItemRowState();
+}
+
+class _MenuItemRowState extends State<_MenuItemRow> {
+  bool _hovered = false;
 
   @override
   Widget build(BuildContext context) {
+    final item = widget.item;
+    final enabled = item.enabled;
+
     return MouseRegion(
-      onEnter: (_) => setState(() => _isHovered = true),
-      onExit: (_) => setState(() => _isHovered = false),
-      child: PopupMenuButton<String>(
-        tooltip: '',
-        onSelected: widget.onSelected,
-        padding: EdgeInsets.zero,
-        offset: const Offset(0, 30),
-        color: const Color(0xFF252526),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(6),
-          side: const BorderSide(color: Color(0xFF454545), width: 0.5),
-        ),
-        elevation: 16,
-        shadowColor: Colors.black87,
-        itemBuilder: (_) {
-          final List<PopupMenuEntry<String>> entries = [];
-          for (final item in widget.items) {
-            if (item.isSeparator) {
-              entries.add(const PopupMenuDivider(height: 9));
-            } else {
-              entries.add(PopupMenuItem<String>(
-                value: item.id,
-                enabled: item.enabled,
-                height: 32,
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                child: Row(
-                  children: [
-                    // Check-mark column (16px wide) — always present for alignment
-                    SizedBox(
-                      width: 20,
-                      child: item.checked
-                          ? const Icon(Icons.check_rounded, size: 14, color: Color(0xFF3794FF))
-                          : null,
-                    ),
-                    // Icon column
-                    if (item.icon != null) ...[
-                      Icon(item.icon, size: 15,
-                          color: item.enabled ? const Color(0xFFB0B0B0) : const Color(0xFF5A5A5A)),
-                      const SizedBox(width: 8),
-                    ],
-                    // Label
-                    Expanded(
-                      child: Text(
-                        item.label ?? '',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: item.enabled ? const Color(0xFFD4D4D4) : const Color(0xFF6A6A6A),
-                        ),
-                      ),
-                    ),
-                    // Shortcut
-                    if (item.shortcut != null) ...[
-                      const SizedBox(width: 24),
-                      Text(
-                        item.shortcut!,
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: item.enabled ? const Color(0xFF858585) : const Color(0xFF4A4A4A),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ));
-            }
-          }
-          return entries;
-        },
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        onTap: enabled ? () => widget.onTap(item.id!) : null,
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-          decoration: BoxDecoration(
-            color: _isHovered ? const Color(0xFF2A2D2E) : Colors.transparent,
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Text(
-            widget.label,
-            style: TextStyle(
-              fontSize: 12,
-              color: _isHovered ? const Color(0xFFFFFFFF) : const Color(0xFFCCCCCC),
-            ),
+          height: 28,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          color: (_hovered && enabled) ? const Color(0xFF04395E) : Colors.transparent,
+          child: Row(
+            children: [
+              // Check-mark column
+              SizedBox(
+                width: 20,
+                child: item.checked
+                    ? const Icon(Icons.check_rounded, size: 14, color: Color(0xFF3794FF))
+                    : null,
+              ),
+              // Icon column
+              if (item.icon != null) ...[
+                Icon(item.icon, size: 15,
+                    color: enabled ? const Color(0xFFB0B0B0) : const Color(0xFF5A5A5A)),
+                const SizedBox(width: 8),
+              ],
+              // Label
+              Expanded(
+                child: Text(
+                  item.label ?? '',
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: enabled ? const Color(0xFFD4D4D4) : const Color(0xFF6A6A6A),
+                  ),
+                ),
+              ),
+              // Shortcut
+              if (item.shortcut != null) ...[
+                const SizedBox(width: 24),
+                Text(
+                  item.shortcut!,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: enabled ? const Color(0xFF858585) : const Color(0xFF4A4A4A),
+                  ),
+                ),
+              ],
+            ],
           ),
         ),
       ),
