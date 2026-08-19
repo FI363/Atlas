@@ -422,11 +422,20 @@ class _TopHeaderBarState extends State<TopHeaderBar> {
           const Icon(Icons.code_rounded, size: 17, color: Color(0xFF3794FF)),
           const SizedBox(width: 10),
 
-          // Menu labels
-          for (int i = 0; i < menus.length; i++) _buildMenuLabel(i, menus[i].label),
+          // Menu labels (horizontally scrollable if screen is narrow)
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  for (int i = 0; i < menus.length; i++) _buildMenuLabel(i, menus[i].label),
+                ],
+              ),
+            ),
+          ),
 
           const SizedBox(width: 6),
-          const Spacer(),
 
           // Connection status badge / pairing trigger
           _ConnectionStatusBadge(

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../state/workspace_state.dart';
+import '../utils/file_icons.dart';
 
 /// VS Code-style File Explorer with active item highlighting, parent folder targeting,
 /// auto-expansion, and inline file/folder creation.
@@ -260,24 +261,8 @@ class _FileExplorerState extends State<FileExplorer> {
     return widgets;
   }
 
-  IconData _fileIcon(String name) {
-    if (name.endsWith('.dart')) return Icons.code_rounded;
-    if (name.endsWith('.yaml') || name.endsWith('.yml')) return Icons.tune_rounded;
-    if (name.endsWith('.md')) return Icons.description_outlined;
-    if (name.endsWith('.json')) return Icons.data_object;
-    if (name.endsWith('.js')) return Icons.javascript;
-    if (name.endsWith('.lock')) return Icons.lock_outlined;
-    return Icons.insert_drive_file_outlined;
-  }
-
-  Color _fileColor(String name) {
-    if (name.endsWith('.dart')) return const Color(0xFF519ABA);
-    if (name.endsWith('.yaml') || name.endsWith('.yml')) return const Color(0xFFE37933);
-    if (name.endsWith('.md')) return const Color(0xFF4EC9B0);
-    if (name.endsWith('.json')) return const Color(0xFFCBCB41);
-    if (name.endsWith('.js')) return const Color(0xFFF7DF1E);
-    return const Color(0xFF8E8E8E);
-  }
+  IconData _fileIcon(String name) => FileIcons.icon(name);
+  Color _fileColor(String name) => FileIcons.color(name);
   Future<void> _handleOpenFolder(BuildContext context) async {
     // If connected to remote engine, offer quick choice: Native Server Dialog or Enter Path directly
     final currentCwd = widget.workspaceState.engine.cwd;

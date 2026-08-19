@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../state/workspace_state.dart';
+import '../utils/file_icons.dart';
+import '../utils/syntax_highlighter.dart';
 
 /// An editable source surface that preserves drafts while tabs are switched,
 /// showing VS Code-style dirty indicators (●) and supporting Ctrl+S and Save All.
@@ -15,7 +17,7 @@ class EditorPanel extends StatefulWidget {
 }
 
 class _EditorPanelState extends State<EditorPanel> {
-  final _controller = TextEditingController();
+  final _controller = SyntaxHighlightingController();
   final _editorFocusNode = FocusNode();
   final _findController = TextEditingController();
   final _replaceController = TextEditingController();
@@ -137,7 +139,9 @@ class _EditorPanelState extends State<EditorPanel> {
   }
 
   void _syncEditor(String? file, String? content, bool isDirty) {
-    if (file == null || content == null || (_controllerFile == file && isDirty)) return;
+    if (file == null || content == null) return;
+    _controller.language = FileIcons.highlightLanguage(file);
+    if (_controllerFile == file && isDirty) return;
     if (_controllerFile == file && _controller.text == content) return;
     _controllerFile = file;
     _controller.value = TextEditingValue(
@@ -376,6 +380,12 @@ class _TabItemState extends State<_TabItem> {
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
+              Icon(
+                FileIcons.icon(widget.fileName),
+                size: 14,
+                color: FileIcons.color(widget.fileName),
+              ),
+              const SizedBox(width: 6),
               Text(
                 widget.fileName,
                 style: TextStyle(
@@ -422,6 +432,14 @@ class _BreadcrumbsBar extends StatelessWidget {
       child: Row(
         children: [
           for (int i = 0; i < parts.length; i++) ...[
+            if (i == parts.length - 1) ...[
+              Icon(
+                FileIcons.icon(parts[i]),
+                size: 13,
+                color: FileIcons.color(parts[i]),
+              ),
+              const SizedBox(width: 4),
+            ],
             Text(
               parts[i],
               style: TextStyle(
